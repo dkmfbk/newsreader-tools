@@ -23,6 +23,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import eu.fbk.nwrtools.util.CommandLine;
+import eu.fbk.nwrtools.util.RDFUtil;
 
 public class LinkingAnalyzer {
 
@@ -97,13 +98,12 @@ public class LinkingAnalyzer {
 
     private void collectTypeOccurrences() throws Throwable {
         for (final String line : Files.readLines(this.occurrencesFile, Charsets.UTF_8)) {
-            final String cleanedLine = cleanLine(line);
-            final String[] tokens = cleanedLine.split("\\s+");
             try {
-                final URI uri = new URIImpl(tokens[0]);
-                final int entities = Integer.parseInt(tokens[1]);
-                final int totalEntities = Integer.parseInt(tokens[2]);
-                final int documents = Integer.parseInt(tokens[3]);
+                final String[] values = parseLine(line);
+                final URI uri = new URIImpl(values[0]);
+                final int entities = Integer.parseInt(values[1]);
+                final int totalEntities = Integer.parseInt(values[2]);
+                final int documents = Integer.parseInt(values[3]);
                 Type type = this.types.get(uri);
                 if (type == null) {
                     type = new Type(uri, entities, totalEntities, documents);
@@ -118,11 +118,10 @@ public class LinkingAnalyzer {
     private Multimap<URI, URI> collectTypeTaxonomy() throws Throwable {
         final Multimap<URI, URI> result = HashMultimap.create();
         for (final String line : Files.readLines(this.taxonomyFile, Charsets.UTF_8)) {
-            final String cleanedLine = cleanLine(line);
-            final String[] tokens = cleanedLine.split("\\s+");
             try {
-                final URI parent = new URIImpl(tokens[0]);
-                final URI child = new URIImpl(tokens[1]);
+                final String[] values = parseLine(line);
+                final URI parent = new URIImpl(values[0]);
+                final URI child = new URIImpl(values[1]);
                 final Type parentType = this.types.get(parent);
                 final Type childType = this.types.get(child);
                 if (parentType != null && childType != null) {
@@ -136,17 +135,15 @@ public class LinkingAnalyzer {
         return result;
     }
 
-    private String cleanLine(final String line) {
-        final StringBuilder builder = new StringBuilder();
-        for (int i = 0; i < line.length(); ++i) {
-            final char c = line.charAt(i);
-            if (c == ',') {
-                builder.append(' ');
-            } else if (c != '\'' && c != '"' && c != '<' && c != '>') {
-                builder.append(c);
+    private String[] parseLine(final String line) {
+        final String[] tokens = line.split("\\s*[,;\\s]\\s*");
+        for (int i = 0; i < tokens.length; ++i) {
+            final char c = tokens[i].charAt(0);
+            if (c == '\'' || c == '\"' || c == '<' || c == '_') {
+                tokens[i] = RDFUtil.parseValue(tokens[i]).stringValue();
             }
         }
-        return builder.toString();
+        return tokens;
     }
 
     private String formatReport() {
