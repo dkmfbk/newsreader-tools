@@ -27,6 +27,8 @@ import org.slf4j.Logger;
 
 import ch.qos.logback.classic.Level;
 
+import eu.fbk.rdfpro.util.Statements;
+
 public final class CommandLine {
 
     private final List<String> args;
@@ -121,7 +123,7 @@ public final class CommandLine {
 
     private static <T> T convert(final String string, final Class<T> type) {
         try {
-            return RDFUtil.convert(string, type);
+            return Statements.convert(string, type);
         } catch (final Throwable ex) {
             throw new Exception("'" + string + "' is not a valid " + type.getSimpleName(), ex);
         }

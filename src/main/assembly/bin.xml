@@ -8,13 +8,17 @@
   <fileSets>
     <fileSet>
       <directory>src/main/scripts</directory>
-      <outputDirectory>/</outputDirectory>
+      <outputDirectory></outputDirectory>
       <fileMode>0755</fileMode>
       <directoryMode>0755</directoryMode>
     </fileSet>
     <fileSet>
+      <directory>src/main/config</directory>
+      <outputDirectory>etc</outputDirectory>
+    </fileSet>
+    <fileSet>
       <directory>.</directory>
-      <outputDirectory>/</outputDirectory>
+      <outputDirectory></outputDirectory>
       <includes>
         <include>README.md</include>
         <include>NOTICE</include>

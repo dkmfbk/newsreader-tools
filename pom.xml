@@ -15,6 +15,11 @@
 
   <dependencies>
     <dependency>
+      <groupId>eu.fbk.rdfpro</groupId>
+      <artifactId>rdfpro-core</artifactId>
+      <version>${rdfpro.version}</version>
+    </dependency>
+    <dependency>
       <groupId>eu.fbk.knowledgestore</groupId>
       <artifactId>ks-client</artifactId>
       <version>${ks.version}</version>
@@ -142,6 +147,19 @@
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>${compiler-plugin.version}</version>
+        <configuration>
+          <source>${java.source.version}</source>
+          <target>${java.target.version}</target>
+          <debug>true</debug>
+          <optimize>false</optimize>
+          <showDeprecation>true</showDeprecation>
+          <showWarnings>true</showWarnings>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-assembly-plugin</artifactId>
         <version>${assembly-plugin.version}</version>
         <executions>
@@ -165,8 +183,8 @@
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <java.source.version>1.7</java.source.version>
-    <java.target.version>1.7</java.target.version>
+    <java.source.version>1.8</java.source.version>
+    <java.target.version>1.8</java.target.version>
 
     <junit.version>4.11</junit.version>
     <jsr305.version>2.0.3</jsr305.version>
@@ -181,6 +199,7 @@
     <commons-math3.version>3.2</commons-math3.version>
     <commons-cli.version>1.2</commons-cli.version>
     <ks.version>1.2-SNAPSHOT</ks.version>
+    <rdfpro.version>0.3-SNAPSHOT</rdfpro.version>
 
     <compiler-plugin.version>3.1</compiler-plugin.version>
     <assembly-plugin.version>2.4</assembly-plugin.version>

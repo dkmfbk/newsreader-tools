@@ -23,7 +23,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import eu.fbk.nwrtools.util.CommandLine;
-import eu.fbk.nwrtools.util.RDFUtil;
+import eu.fbk.rdfpro.util.Statements;
 
 public class LinkingAnalyzer {
 
@@ -140,7 +140,7 @@ public class LinkingAnalyzer {
         for (int i = 0; i < tokens.length; ++i) {
             final char c = tokens[i].charAt(0);
             if (c == '\'' || c == '\"' || c == '<' || c == '_') {
-                tokens[i] = RDFUtil.parseValue(tokens[i]).stringValue();
+                tokens[i] = Statements.parseValue(tokens[i]).stringValue();
             }
         }
         return tokens;
