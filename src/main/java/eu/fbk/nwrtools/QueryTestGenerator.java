@@ -152,8 +152,8 @@ public final class QueryTestGenerator {
             if (start < 0) {
                 start = -start - 1; // in case exact match not found
             }
-            if (start >= numTuples) {
-                return false; // if range is empty
+            if (start >= numTuples || !tuples.get(start).matches(searchTuple)) {
+                return false; // if range is empty or cannot join
             }
             end = start + 1;
             while (end < numTuples && tuples.get(end).matches(searchTuple)) {
@@ -165,6 +165,14 @@ public final class QueryTestGenerator {
         final int chosenIndex = start + RANDOM.nextInt(end - start);
         final Tuple chosenTuple = tuples.get(chosenIndex);
         for (int i = 0; i < numVariables; ++i) {
+            final int slot = mappings[i];
+            final int oldValue = outputCodes[slot];
+            final int newValue = chosenTuple.get(i);
+            if (oldValue != 0 && newValue != oldValue) {
+                throw new Error("Join error: " + chosenTuple + " - "
+                        + Arrays.toString(outputCodes) + " (search:  "
+                        + Arrays.toString(searchCodes) + "; start " + start + "; end " + end + ")");
+            }
             outputCodes[mappings[i]] = chosenTuple.get(i);
         }
 
@@ -192,15 +200,22 @@ public final class QueryTestGenerator {
             tracker.start();
 
             // Read data tuples, mapping values to codes using the dictionary
+            int lineNum = 0;
             String line;
             final int[] codes = new int[vars.size()];
             while ((line = reader.readLine()) != null) {
-                final String[] tokens = line.split("\t");
-                for (int j = 0; j < codes.length; ++j) {
-                    codes[j] = dictionary.codeFor(tokens[j]);
+                try {
+                    ++lineNum;
+                    final String[] tokens = line.split("\t");
+                    for (int j = 0; j < codes.length; ++j) {
+                        codes[j] = dictionary.codeFor(tokens[j]);
+                    }
+                    tuples.add(Tuple.create(codes));
+                    tracker.increment();
+                } catch (final Throwable ex) {
+                    LOGGER.warn("Ignoring invalid line " + lineNum + " of file " + file + " - "
+                            + ex.getMessage() + " [" + line + "]");
                 }
-                tuples.add(Tuple.create(codes));
-                tracker.increment();
             }
 
             // Signal completion
@@ -548,10 +563,10 @@ public final class QueryTestGenerator {
 
             private final int code2;
 
-            Tuple3(final int value0, final int value1, final int value2) {
-                this.code0 = value0;
-                this.code1 = value1;
-                this.code2 = value2;
+            Tuple3(final int code0, final int code1, final int code2) {
+                this.code0 = code0;
+                this.code1 = code1;
+                this.code2 = code2;
             }
 
             @Override
@@ -585,11 +600,11 @@ public final class QueryTestGenerator {
 
             private final int code3;
 
-            Tuple4(final int value0, final int value1, final int value2, final int value3) {
-                this.code0 = value0;
-                this.code1 = value1;
-                this.code2 = value2;
-                this.code3 = value3;
+            Tuple4(final int code0, final int code1, final int code2, final int code3) {
+                this.code0 = code0;
+                this.code1 = code1;
+                this.code2 = code2;
+                this.code3 = code3;
             }
 
             @Override
@@ -619,8 +634,8 @@ public final class QueryTestGenerator {
 
             private final int[] codes;
 
-            TupleN(final int[] values) {
-                this.codes = values;
+            TupleN(final int[] codes) {
+                this.codes = codes;
             }
 
             @Override
