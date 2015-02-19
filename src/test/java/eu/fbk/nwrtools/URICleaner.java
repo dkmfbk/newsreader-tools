@@ -41,9 +41,13 @@ public class URICleaner {
         final StringBuilder builder = new StringBuilder();
         for (int i = 0; i < string.length(); ++i) {
             final int b = bytes[i] & 0xFF; // transform from signed to unsigned
-            if (b >= 'a' && b <= 'z' || b >= '?' && b <= '[' || b >= '#' && b <= ';' || b == '!'
-                    || b == '=' || b == ']' || b == '_' || b == '~') {
+            if (b >= 'a' && b <= 'z' || b >= '?' && b <= '[' || b >= '&' && b <= ';' || b == '#'
+                    || b == '$' || b == '!' || b == '=' || b == ']' || b == '_' || b == '~') {
                 builder.append((char) b);
+            } else if (b == '%' && i < string.length() - 2
+                    && Character.digit(string.charAt(i + 1), 16) >= 0
+                    && Character.digit(string.charAt(i + 2), 16) >= 0) {
+                builder.append('%'); // preserve valid percent encodings
             } else {
                 builder.append('%').append(Character.forDigit(b / 16, 16))
                         .append(Character.forDigit(b % 16, 16));
