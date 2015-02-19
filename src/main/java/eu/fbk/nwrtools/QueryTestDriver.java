@@ -1,15 +1,30 @@
 package eu.fbk.nwrtools;
 
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.Writer;
+import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import javax.annotation.Nullable;
 
+import com.google.common.base.Charsets;
+import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
@@ -18,32 +33,537 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.primitives.Ints;
+import com.google.common.primitives.Longs;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 
+import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics;
+import org.openrdf.model.Resource;
 import org.openrdf.model.URI;
 import org.openrdf.model.Value;
 import org.openrdf.model.ValueFactory;
 import org.openrdf.model.impl.ValueFactoryImpl;
+import org.openrdf.query.Binding;
 import org.openrdf.query.BindingSet;
 import org.openrdf.query.impl.MapBindingSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 
+import jersey.repackaged.com.google.common.collect.Ordering;
+import jersey.repackaged.com.google.common.collect.Sets;
+
 import eu.fbk.knowledgestore.Operation.Sparql;
 import eu.fbk.knowledgestore.Session;
+import eu.fbk.knowledgestore.client.Client;
 import eu.fbk.knowledgestore.data.Data;
+import eu.fbk.knowledgestore.data.Record;
 import eu.fbk.knowledgestore.data.Representation;
+import eu.fbk.knowledgestore.data.Stream;
+import eu.fbk.knowledgestore.vocabulary.KS;
+import eu.fbk.nwrtools.util.CommandLine;
+import eu.fbk.rdfpro.util.IO;
+import eu.fbk.rdfpro.util.Namespaces;
 import eu.fbk.rdfpro.util.Statements;
+import eu.fbk.rdfpro.util.Tracker;
 
-public class QueryTestDriver {
+public final class QueryTestDriver {
 
-    static abstract class Query {
+    private static final Logger LOGGER = LoggerFactory.getLogger(QueryTestDriver.class);
 
-        private static final Logger LOGGER = LoggerFactory.getLogger(Query.class);
+    private static final ValueFactory FACTORY = ValueFactoryImpl.getInstance();
 
-        private static final ValueFactory FACTORY = ValueFactoryImpl.getInstance();
+    private static final String MDC_CONTEXT = "context";
 
-        private static final AtomicLong COUNTER = new AtomicLong(0);
+    private final String url; // test.url
+
+    private final String username; // test.username
+
+    private final String password; // test.password
+
+    private final int warmupMixes; // test.warmupmixes
+
+    private final int testMixes; // test.testmixes
+
+    private final long warmupTime; // test.warmuptime
+
+    private final long testTime; // test.testtime
+
+    private final int clients; // test.clients
+
+    private final long timeout; // test.timeout
+
+    private final Query[] queries; // test.queries
+
+    private final List<String> outputVariables;
+
+    private List<String> inputVariables;
+
+    private final byte[][] inputData;
+
+    public static void main(final String... args) {
+        try {
+            MDC.put(MDC_CONTEXT, "main");
+
+            final CommandLine cmd = CommandLine
+                    .parser()
+                    .withName("QueryTestDriver")
+                    .withHeader(
+                            "Perform a query scalability test against a KnowledgeStore. "
+                                    + "Test parameters and queries are supplied in a .properties file. "
+                                    + "Test data (produced with query-test-generator) "
+                                    + "is supplied in a .tsv file.")
+                    .withOption("c", "config", "the configuration file", "FILE",
+                            CommandLine.Type.FILE_EXISTING, true, false, true)
+                    .withOption("s", "seed", "the seed controlling the selection of test cases",
+                            "NUM", CommandLine.Type.INTEGER, true, false, false)
+                    .withOption("o", "output", "the output TSV file", "FILE",
+                            CommandLine.Type.FILE, true, false, true)
+                    .withLogger(LoggerFactory.getLogger("eu.fbk.nwrtools")).parse(args);
+
+            final File configFile = cmd.getOptionValue("c", File.class);
+            final File outputFile = cmd.getOptionValue("o", File.class);
+            final long seed = cmd.getOptionValue("s", Long.class, 0L);
+
+            final Properties config = new Properties();
+            try (InputStream configStream = IO.read(configFile.getAbsolutePath())) {
+                config.load(configStream);
+            }
+
+            try (Writer output = IO.utf8Writer(IO.buffer(IO.write(outputFile.getAbsolutePath())))) {
+                new QueryTestDriver(config, configFile.getParentFile()).run(seed, output);
+            }
+
+        } catch (final Throwable ex) {
+            CommandLine.fail(ex);
+        }
+    }
+
+    public QueryTestDriver(final Properties properties, @Nullable final File baseDir)
+            throws IOException {
+
+        // Parse server URL, username and password
+        this.url = read(properties, "test.url", String.class);
+        this.username = read(properties, "test.username", String.class, null);
+        this.password = read(properties, "test.password", String.class, null);
+        LOGGER.info("SUT: {}{}", this.url,
+                this.username == null && this.password == null ? " (anonymous access)"
+                        : " (authenticated access)");
+
+        // Parse number of mixes, max times and client counts
+        this.warmupMixes = read(properties, "test.warmupmixes", Integer.class, 0);
+        this.testMixes = read(properties, "test.testmixes", Integer.class, 1);
+        this.warmupTime = read(properties, "test.warmuptime", Long.class, 3600L) * 1000;
+        this.testTime = read(properties, "test.testtime", Long.class, 3600L) * 1000;
+        this.clients = read(properties, "test.clients", Integer.class, 1);
+        LOGGER.info("{} mix(es), {} ms warmup; {} mix(es), {} ms test; {} client(s)",
+                this.warmupMixes, this.warmupTime / 1000, this.testMixes, this.testTime / 1000,
+                this.clients);
+
+        // Parse default timeout
+        this.timeout = read(properties, "test.timeout", Long.class, -1L);
+
+        // Parse test data
+        final File base = baseDir != null ? baseDir : new File(System.getProperty("user.dir"));
+        final File dataFile = base.toPath()
+                .resolve(Paths.get(read(properties, "test.data", String.class))).toFile();
+        Preconditions.checkArgument(dataFile.exists(), "File " + dataFile + " does not exist");
+        final List<byte[]> data = Lists.newArrayList();
+        try (BufferedReader reader = new BufferedReader(IO.utf8Reader(IO.buffer(IO.read(dataFile
+                .getAbsolutePath()))))) {
+            String line = reader.readLine();
+            final String[] inputVariables = line.split("\t");
+            for (int i = 0; i < inputVariables.length; ++i) {
+                inputVariables[i] = inputVariables[i].substring(1);
+            }
+            this.inputVariables = ImmutableList.copyOf(inputVariables);
+            LOGGER.info("Input schema: ({})", Joiner.on(", ").join(this.inputVariables));
+            final Tracker tracker = new Tracker(LOGGER, null, //
+                    "Parsed " + dataFile + ": %d tuples (%d tuple/s avg)", //
+                    "Parsed %d tuples (%d tuple/s, %d tuple/s avg)");
+            tracker.start();
+            while ((line = reader.readLine()) != null) {
+                data.add(line.getBytes(Charsets.UTF_8));
+                tracker.increment();
+            }
+            tracker.end();
+        }
+        this.inputData = data.toArray(new byte[data.size()][]);
+
+        // Parse queries
+        final Properties defaultQueryProperties = new Properties();
+        if (this.timeout >= 0) {
+            defaultQueryProperties.setProperty("timeout", Long.toString(this.timeout));
+        }
+        final List<Query> allQueries = Query.create(properties, defaultQueryProperties);
+        final List<Query> enabledQueries = Lists.newArrayList();
+        final Set<String> enabledNames = Sets.newLinkedHashSet(Arrays.asList(read(properties,
+                "test.queries", String.class).split("\\s*[,]\\s*")));
+        for (final String name : enabledNames) {
+            boolean added = false;
+            for (final Query query : allQueries) {
+                if (query.getName().equals(name)) {
+                    enabledQueries.add(query);
+                    added = true;
+                    break;
+                }
+            }
+            Preconditions.checkArgument(added, "Unknown query " + name);
+        }
+        this.queries = enabledQueries.toArray(new Query[enabledQueries.size()]);
+        LOGGER.info("{} queries enabled ({} defined): {}", enabledQueries.size(),
+                allQueries.size(), Joiner.on(", ").join(enabledQueries));
+
+        // Check query variables and build list of output variables
+        final List<String> outputVariables = Lists.newArrayList("mix.client", "mix.index",
+                "mix.input", "mix.start", "mix.time");
+        for (final String variable : this.inputVariables) {
+            outputVariables.add("input." + variable);
+        }
+        for (final Query query : this.queries) {
+            for (final String inputVariable : query.getInputVariables()) {
+                if (!this.inputVariables.contains(inputVariable)) {
+                    throw new IllegalArgumentException("Query " + query
+                            + " refers to unknown input variable " + inputVariable);
+                }
+            }
+            for (final String outputVariable : Ordering.natural().immutableSortedCopy(
+                    query.getOutputVariables())) {
+                outputVariables.add(query.getName() + "." + outputVariable);
+            }
+        }
+        this.outputVariables = ImmutableList.copyOf(outputVariables);
+        LOGGER.info("Output schema: {} attributes", this.outputVariables.size());
+    }
+
+    public void run(final long seed, @Nullable final Writer writer) throws Throwable {
+
+        // Allocate a random number generator
+        final Random random = new Random(seed);
+
+        // Take a timestamp and allocate data structure for computing statistics
+        final long ts = System.currentTimeMillis();
+        final List<String> queryNames = Lists.newArrayList();
+        for (final Query query : this.queries) {
+            queryNames.add(query.getName());
+        }
+        final Statistics stats = new Statistics(queryNames);
+
+        // Log test started
+        LOGGER.info("Test started");
+
+        // Perform warmup (if enabled)
+        if (this.warmupMixes > 0) {
+            runClients(this.warmupMixes, this.warmupTime, random, "Warmup", null, null);
+        }
+
+        // Perform the real test (if enabled)
+        if (this.clients > 0 && this.testMixes > 0) {
+            if (writer != null) {
+                for (int i = 0; i < this.outputVariables.size(); ++i) {
+                    writer.write(i == 0 ? "?" : "\t?");
+                    writer.write(this.outputVariables.get(i));
+                }
+                writer.write("\n");
+            }
+            runClients(this.testMixes, this.testTime, random, "Measurement", writer, stats);
+        }
+
+        // Log test completion
+        LOGGER.info("Test completed in {} ms\n\n{}\n", System.currentTimeMillis() - ts, stats);
+    }
+
+    private void runClients(final int maxMixes, final long maxTime, final Random random,
+            final String phaseName, @Nullable final Writer writer, @Nullable final Statistics stats)
+            throws Throwable {
+
+        // Log start
+        LOGGER.info("{} started ({} clients, {} mix(es), {} queries/mix)", phaseName,
+                this.clients, maxMixes, this.queries.length);
+
+        // Create a Tracker to track the progress of the process
+        final Tracker tracker = new Tracker(LOGGER, null,
+                "Completed %d query mixes (%d mixes/s avg)",
+                "Completed %d query mixes (%d mixes/s, %d mixes/s avg)");
+        tracker.start();
+
+        // Start a thread for each concurrent client
+        final AtomicReference<Throwable> exceptionHolder = new AtomicReference<>();
+        final Thread mainThread = Thread.currentThread();
+        final ExecutorService executor = Executors.newCachedThreadPool(new ThreadFactoryBuilder()
+                .setDaemon(true).setNameFormat("client-%02d").build());
+        final AtomicLong startTimestamp = new AtomicLong(Long.MAX_VALUE);
+        final AtomicLong endTimestamp = new AtomicLong(Long.MIN_VALUE);
+        final long[] clientExecutionTimes = new long[this.clients];
+        final int[] clientMixes = new int[this.clients];
+        try {
+            final AtomicInteger globalMixCounter = new AtomicInteger(maxMixes);
+            for (int i = 0; i < this.clients; ++i) {
+                final int clientId = i;
+                executor.submit(new Runnable() {
+
+                    @Override
+                    public void run() {
+                        final String oldContext = MDC.get(MDC_CONTEXT);
+                        try {
+                            MDC.put(MDC_CONTEXT, String.format("client%d", clientId));
+                            final AtomicInteger localMixCounter = new AtomicInteger(0);
+                            final long startTs = System.currentTimeMillis();
+                            synchronized (startTimestamp) {
+                                if (startTs < startTimestamp.get()) {
+                                    startTimestamp.set(startTs);
+                                }
+                            }
+                            final long endTs = runClient(clientId, globalMixCounter,
+                                    localMixCounter, maxTime, random, tracker, startTs, writer,
+                                    stats);
+                            clientExecutionTimes[clientId] = endTs - startTs;
+                            clientMixes[clientId] = localMixCounter.get();
+                            synchronized (endTimestamp) {
+                                if (endTs > endTimestamp.get()) {
+                                    endTimestamp.set(endTs);
+                                }
+                            }
+                        } catch (final Throwable ex) {
+                            LOGGER.error("[{}] Client failed", clientId, ex);
+                            exceptionHolder.compareAndSet(null, ex);
+                            mainThread.interrupt(); // Stop waiting for other threads
+                        } finally {
+                            MDC.put(MDC_CONTEXT, oldContext);
+                        }
+                    }
+
+                });
+            }
+            executor.shutdown();
+            executor.awaitTermination(Integer.MAX_VALUE, TimeUnit.MILLISECONDS);
+
+        } catch (final InterruptedException ex) {
+            final Throwable ex2 = exceptionHolder.get();
+            if (ex2 != null) {
+                ex.addSuppressed(ex2); // keep track of both exceptions
+            }
+            throw ex;
+
+        } finally {
+            executor.shutdownNow();
+            tracker.end();
+        }
+
+        // Report exception, if any
+        if (exceptionHolder.get() != null) {
+            throw exceptionHolder.get();
+        }
+
+        // Compute and report elapsed time
+        final long elapsed = endTimestamp.get() - startTimestamp.get();
+        if (stats != null) {
+            stats.reportElapsedTest(elapsed);
+        }
+
+        // Log completion
+        LOGGER.info("{} completed in {} ms (client time: {}-{} ms; client mixes: {}-{})",
+                phaseName, elapsed, Longs.min(clientExecutionTimes),
+                Longs.max(clientExecutionTimes), Ints.min(clientMixes), Ints.max(clientMixes));
+    }
+
+    private long runClient(final int clientId, final AtomicInteger globalMixCounter,
+            final AtomicInteger localMixCounter, final long maxTime, final Random random,
+            @Nullable final Tracker tracker, final long startTimestamp,
+            @Nullable final Writer writer, @Nullable final Statistics stats) throws IOException {
+
+        // Log start
+        LOGGER.debug("Client started");
+
+        // Initialize a client and open a session with the SUT
+        long timestamp = startTimestamp;
+        try (Client client = Client.builder(this.url).compressionEnabled(true)
+                .validateServer(false).build()) {
+            try (final Session session = client.newSession(this.username, this.password)) {
+
+                // Log connection acquired
+                LOGGER.debug("Client ready");
+
+                // Perform as many query mixes as requested
+                final String clientContext = MDC.get(MDC_CONTEXT);
+                try {
+                    while (globalMixCounter.getAndDecrement() > 0
+                            && timestamp < startTimestamp + maxTime) {
+                        // Update MDC context
+                        final int mixIndex = localMixCounter.incrementAndGet();
+                        final String mixContext = String.format("%s.mix%d", clientContext,
+                                mixIndex);
+                        MDC.put(MDC_CONTEXT, mixContext);
+
+                        // Pick up a random input tuple
+                        final int index;
+                        synchronized (random) {
+                            index = random.nextInt(this.inputData.length);
+                        }
+                        final String inputLine = new String(this.inputData[index], Charsets.UTF_8);
+                        final BindingSet input = decode(this.inputVariables, inputLine);
+
+                        // Start building the output tuple adding data identifying this mix
+                        final ValueFactory vf = Statements.VALUE_FACTORY;
+                        final MapBindingSet output = new MapBindingSet();
+                        final long mixStartTimestamp = timestamp;
+                        output.addBinding("mix.client", vf.createLiteral(clientId));
+                        output.addBinding("mix.index", vf.createLiteral(mixIndex));
+                        output.addBinding("mix.input", vf.createLiteral(index));
+                        output.addBinding("mix.start", vf.createLiteral(mixStartTimestamp));
+
+                        // Log beginning of query mix
+                        LOGGER.debug("Started for input #{}", index);
+
+                        // Evaluate the queries of the mix, augmenting the output tuple
+                        for (final Query query : this.queries) {
+                            try {
+                                MDC.put(MDC_CONTEXT,
+                                        String.format("%s.%s", mixContext, query.getName()));
+                                final MapBindingSet queryOutput = new MapBindingSet();
+                                timestamp = query.evaluate(session, timestamp, input, queryOutput,
+                                        stats);
+                                for (final Binding binding : queryOutput) {
+                                    output.addBinding(query.getName() + "." + binding.getName(),
+                                            binding.getValue());
+                                }
+                            } finally {
+                                MDC.put(MDC_CONTEXT, mixContext);
+                            }
+                        }
+                        final long elapsed = timestamp - mixStartTimestamp;
+
+                        // Log completion of query mix
+                        LOGGER.debug("Completed in {} ms", elapsed);
+                        if (tracker != null) {
+                            tracker.increment();
+                        }
+
+                        // Store query mix time and update associated statistics, if supplied
+                        output.addBinding("mix.time", vf.createLiteral(elapsed));
+                        if (stats != null) {
+                            stats.reportQueryMixCompletion(elapsed);
+                        }
+
+                        // Emit the output tuple if a Writer has been supplied
+                        if (writer != null) {
+                            LOGGER.trace("Emitting:\n{}",
+                                    format(this.outputVariables, output, "\n"));
+                            final String outputLine = encode(this.outputVariables, output);
+                            synchronized (writer) {
+                                writer.write(outputLine);
+                                writer.write("\n");
+                            }
+                        }
+                    }
+                } finally {
+                    MDC.put(MDC_CONTEXT, clientContext);
+                }
+            }
+        }
+
+        // Log end
+        LOGGER.debug("Client terminated ({} query mixes)", localMixCounter.get());
+
+        // Return end timestamp of last executed query
+        return timestamp;
+    }
+
+    private static BindingSet decode(final List<String> variables, final String line) {
+        final String[] tokens = line.split("\t");
+        Preconditions.checkArgument(tokens.length == variables.size(), "Wrong number of values ("
+                + tokens.length + " found, " + variables.size() + " expected) in line: " + line);
+        try {
+            final MapBindingSet bindings = new MapBindingSet();
+            for (int i = 0; i < tokens.length; ++i) {
+                String token = tokens[i];
+                if (!Strings.isNullOrEmpty(token)) {
+                    final char ch = token.charAt(0);
+                    token = ch == '\'' || ch == '"' || ch == '<' || ch == '_' ? token : "\""
+                            + token + "\"";
+                    final Value value = Statements.parseValue(token, Namespaces.DEFAULT);
+                    bindings.addBinding(variables.get(i), value);
+                }
+            }
+            return bindings;
+        } catch (final Throwable ex) {
+            throw new IllegalArgumentException("Could not parse variable values.\nVariables: "
+                    + variables + "\nLine: " + line, ex);
+        }
+    }
+
+    private static String encode(final List<String> variables, final BindingSet bindings) {
+        final StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < variables.size(); ++i) {
+            if (i > 0) {
+                builder.append('\t');
+            }
+            final Value value = bindings.getValue(variables.get(i));
+            builder.append(format(value));
+        }
+        return builder.toString();
+    }
+
+    private static String format(final Iterable<String> variables, final BindingSet bindings,
+            final String separator) {
+        final StringBuilder builder = new StringBuilder();
+        for (final String variable : variables) {
+            final Value value = bindings.getValue(variable);
+            if (value != null) {
+                builder.append(builder.length() == 0 ? "" : separator);
+                builder.append(variable);
+                builder.append('=');
+                builder.append(format(value));
+            }
+        }
+        return builder.toString();
+    }
+
+    private static String format(final Value value) {
+        // Emit literal without lang / datatype for easier consumption in analysis tools
+        if (value instanceof Resource) {
+            return Statements.formatValue(value, null);
+        } else if (value != null) {
+            return value.stringValue();
+        } else {
+            return "";
+        }
+    }
+
+    private static <T> T read(final Properties properties, final String name, final Class<T> type) {
+        final T value = read(properties, name, type, null);
+        if (value == null) {
+            throw new IllegalArgumentException("No value for mandatory property '" + name + "'");
+        }
+        return value;
+    }
+
+    private static <T> T read(final Properties properties, final String name, final Class<T> type,
+            final T defaultValue) {
+        final String value = properties.getProperty(name);
+        if (value == null) {
+            return defaultValue;
+        }
+        try {
+            return Data.convert(value, type);
+        } catch (final Throwable ex) {
+            throw new IllegalArgumentException("Invalid value for property '" + name + "': "
+                    + value + " (" + ex.getMessage() + ")");
+        }
+    }
+
+    // TODO: remove this hack and use 'uri' as it is
+    private static URI normalizeLayerURI(final URI uri) {
+        if (KS.RESOURCE.equals(uri)) {
+            return KS.RESOURCE;
+        } else if (KS.MENTION.equals(uri)) {
+            return KS.MENTION;
+        } else {
+            return uri;
+        }
+    }
+
+    private static abstract class Query {
 
         private final String name;
 
@@ -62,10 +582,11 @@ public class QueryTestDriver {
             this.timeout = timeout != null ? Long.parseLong(timeout) : null;
             this.inputVariables = ImmutableSet.copyOf(inputVariables);
             this.outputVariables = ImmutableSet.copyOf(Iterables.concat( //
-                    ImmutableSet.of("start", "time", "error"), inputVariables));
+                    ImmutableSet.of("start", "time", "error"), outputVariables));
         }
 
-        public static List<Query> create(final Properties properties) {
+        public static List<Query> create(final Properties properties,
+                final Properties defaultQueryProperties) {
 
             final Map<String, Properties> map = Maps.newLinkedHashMap();
             for (final Object key : properties.keySet()) {
@@ -78,6 +599,7 @@ public class QueryTestDriver {
                     Properties queryProperties = map.get(queryName);
                     if (queryProperties == null) {
                         queryProperties = new Properties();
+                        queryProperties.putAll(defaultQueryProperties);
                         map.put(queryName, queryProperties);
                     }
                     queryProperties.setProperty(propertyName, propertyValue);
@@ -91,9 +613,13 @@ public class QueryTestDriver {
                 final String queryType = queryProperties.getProperty("type");
                 if ("download".equalsIgnoreCase(queryType)) {
                     queries.add(new DownloadQuery(queryName, queryProperties));
-                } else if ("retrieve".equals(queryType)) {
+                } else if ("retrieve".equalsIgnoreCase(queryType)) {
                     queries.add(new RetrieveQuery(queryName, queryProperties));
-                } else if ("count".equals(queryType)) {
+                } else if ("lookup".equalsIgnoreCase(queryType)) {
+                    queries.add(new LookupQuery(queryName, queryProperties));
+                } else if ("lookupall".equalsIgnoreCase(queryType)) {
+                    queries.add(new LookupAllQuery(queryName, queryProperties));
+                } else if ("count".equalsIgnoreCase(queryType)) {
                     queries.add(new CountQuery(queryName, queryProperties));
                 } else if ("sparql".equalsIgnoreCase(queryType)) {
                     queries.add(new SparqlQuery(queryName, queryProperties));
@@ -118,29 +644,20 @@ public class QueryTestDriver {
             return this.outputVariables;
         }
 
-        public BindingSet evaluate(final Session session, final BindingSet input) {
+        public long evaluate(final Session session, final long startTimestamp,
+                final BindingSet input, final MapBindingSet output,
+                @Nullable final Statistics stats) {
 
             final ValueFactory vf = ValueFactoryImpl.getInstance();
-            final MapBindingSet output = new MapBindingSet();
-
-            final long invocationId = COUNTER.incrementAndGet();
-            MDC.put("query", invocationId + "-" + this.name);
 
             if (LOGGER.isDebugEnabled()) {
                 final StringBuilder builder = new StringBuilder();
-                builder.append("Submitting [");
-                for (final String variable : this.inputVariables) {
-                    builder.append(" ");
-                    builder.append(variable);
-                    builder.append("=");
-                    builder.append(output.getBinding(variable));
-                }
-                builder.append("]");
+                builder.append("Started: ");
+                builder.append(format(this.inputVariables, input, " "));
                 LOGGER.debug(builder.toString());
             }
 
             String error = "";
-            final long ts = System.currentTimeMillis();
             try {
                 doEvaluate(session, input, output);
             } catch (final Throwable ex) {
@@ -148,35 +665,49 @@ public class QueryTestDriver {
                         + Strings.nullToEmpty(ex.getMessage());
                 LOGGER.warn("Got exception", ex);
             }
-            final long elapsed = System.currentTimeMillis() - ts;
+
+            long size = -1;
+            try {
+                final Value value = output.getValue("size");
+                if (value != null) {
+                    size = Long.parseLong(value.stringValue());
+                }
+            } catch (final Throwable ex) {
+                // Ignore
+            }
+
+            final long endTimestamp = System.currentTimeMillis();
+            final long elapsed = endTimestamp - startTimestamp;
+
+            if (stats != null) {
+                stats.reportQueryCompletion(this.name, !"".equals(error), elapsed, size);
+            }
+
+            output.addBinding("time", vf.createLiteral(elapsed));
 
             if (LOGGER.isDebugEnabled()) {
                 final StringBuilder builder = new StringBuilder();
-                builder.append("".equals(error) ? "Succeeded" : "Failed");
-                builder.append(" after ");
-                builder.append(elapsed);
-                builder.append(" ms [");
-                for (final String variable : this.outputVariables) {
-                    builder.append(" ");
-                    builder.append(variable);
-                    builder.append("=");
-                    builder.append(output.getBinding(variable));
-                }
-                builder.append("]");
+                builder.append("".equals(error) ? "Success" : "Failure");
+                builder.append(": ");
+                builder.append(format(this.inputVariables, input, " "));
+                builder.append(" -> ");
+                builder.append(format(this.outputVariables, output, " "));
                 LOGGER.debug(builder.toString());
             }
 
-            MDC.remove("query");
-
-            output.addBinding("time", vf.createLiteral(elapsed));
-            output.addBinding("start", vf.createLiteral(ts));
+            output.addBinding("start", vf.createLiteral(startTimestamp));
             output.addBinding("error", vf.createLiteral(error));
 
-            return output;
+            return endTimestamp;
         }
 
         abstract void doEvaluate(Session session, BindingSet input, MapBindingSet output)
                 throws Throwable;
+
+        @Override
+        public String toString() {
+            return this.name;
+        }
 
         private static class DownloadQuery extends Query {
 
@@ -198,19 +729,24 @@ public class QueryTestDriver {
             void doEvaluate(final Session session, final BindingSet input,
                     final MapBindingSet output) throws Throwable {
 
-                final URI id = ValueFactoryImpl.getInstance()
-                        .createURI(this.id.instantiate(input));
+                final URI id = (URI) Statements.parseValue(this.id.instantiate(input),
+                        Namespaces.DEFAULT);
 
                 long size = 0L;
                 try (final Representation representation = session.download(id)
                         .caching(this.caching).timeout(getTimeout()).exec()) {
-                    size = representation.writeToByteArray().length;
-
+                    if (representation != null) {
+                        size = representation.writeToByteArray().length;
+                    } else {
+                        LOGGER.warn("No results for DOWNLOAD request, id " + id);
+                    }
+                } catch (final Throwable ex) {
+                    throw new RuntimeException("Failed DOWNLOAD, id " + format(id) + ", caching "
+                            + this.caching, ex);
                 } finally {
                     output.addBinding("size", FACTORY.createLiteral(size));
                 }
             }
-
         }
 
         private static class RetrieveQuery extends Query {
@@ -236,7 +772,7 @@ public class QueryTestDriver {
             private RetrieveQuery(final String name, final Properties properties,
                     @Nullable final Template condition) {
 
-                super(name, properties, condition.getVariables(), ImmutableList.of("records"));
+                super(name, properties, condition.getVariables(), ImmutableList.of("size"));
 
                 final String offset = properties.getProperty("offset");
                 final String limit = properties.getProperty("limit");
@@ -250,7 +786,8 @@ public class QueryTestDriver {
                     }
                 }
 
-                this.layer = (URI) Statements.parseValue(properties.getProperty("layer"));
+                this.layer = normalizeLayerURI((URI) Statements.parseValue(
+                        properties.getProperty("layer"), Namespaces.DEFAULT));
                 this.condition = condition;
                 this.offset = offset == null ? null : Long.parseLong(offset);
                 this.limit = limit == null ? null : Long.parseLong(limit);
@@ -263,16 +800,128 @@ public class QueryTestDriver {
 
                 final String condition = Strings.nullToEmpty(this.condition.instantiate(input));
 
-                long numResults = 0L;
+                long numTriples = 0L;
                 try {
-                    numResults = session.retrieve(this.layer).condition(condition)
-                            .offset(this.offset).limit(this.limit).properties(this.properties)
-                            .exec().count();
+                    // FIXME: conditions do not seem to work
+                    final Stream<Record> stream = session.retrieve(this.layer)
+                            .condition(condition).offset(this.offset).limit(this.limit)
+                            .properties(this.properties).exec();
+                    numTriples = Record.encode(stream, ImmutableList.of(this.layer)).count();
+                    if (numTriples == 0) {
+                        LOGGER.warn("No results for RETRIEVE request, layer " + format(this.layer)
+                                + ", condition '" + condition + "', offset " + this.offset
+                                + ", limit " + this.limit);
+                    }
+
+                } catch (final Throwable ex) {
+                    throw new RuntimeException("Failed RETRIEVE " + format(this.layer)
+                            + ", condition " + condition + ", offset " + this.offset + ", limit"
+                            + this.limit + ", properties " + this.properties, ex);
                 } finally {
-                    output.addBinding("records", FACTORY.createLiteral(numResults));
+                    output.addBinding("size", FACTORY.createLiteral(numTriples));
+                }
+            }
+        }
+
+        private static class LookupQuery extends Query {
+
+            private final URI layer;
+
+            @Nullable
+            private final Template id;
+
+            @Nullable
+            private final List<URI> properties;
+
+            LookupQuery(final String name, final Properties properties) {
+                this(name, properties, Template.forString(properties.getProperty("id")));
+            }
+
+            private LookupQuery(final String name, final Properties properties,
+                    @Nullable final Template id) {
+
+                super(name, properties, id.getVariables(), ImmutableList.of("size"));
+
+                List<URI> props = null;
+                if (properties.containsKey("properties")) {
+                    props = Lists.newArrayList();
+                    for (final String token : Splitter.onPattern("[ ,;]").omitEmptyStrings()
+                            .trimResults().split(properties.getProperty("properties"))) {
+                        props.add((URI) Statements.parseValue(token));
+                    }
+                }
+
+                this.layer = normalizeLayerURI((URI) Statements.parseValue(
+                        properties.getProperty("layer"), Namespaces.DEFAULT));
+                this.id = id;
+                this.properties = props;
+            }
+
+            @Override
+            void doEvaluate(final Session session, final BindingSet input,
+                    final MapBindingSet output) throws Throwable {
+
+                final URI id = (URI) Statements.parseValue(this.id.instantiate(input),
+                        Namespaces.DEFAULT);
+
+                long numTriples = 0L;
+                try {
+                    final Stream<Record> stream = session.retrieve(this.layer).ids(id)
+                            .properties(this.properties).exec();
+                    numTriples = Record.encode(stream, ImmutableList.of(this.layer)).count();
+                    if (numTriples == 0) {
+                        LOGGER.warn("No results for LOOKUP request, layer " + format(this.layer)
+                                + ", id " + id);
+                    }
+
+                } catch (final Throwable ex) {
+                    throw new RuntimeException("Failed LOOKUP " + format(this.layer) + ", id "
+                            + format(id) + ", properties " + this.properties, ex);
+                } finally {
+                    output.addBinding("size", FACTORY.createLiteral(numTriples));
                 }
             }
 
+        }
+
+        private static class LookupAllQuery extends Query {
+
+            @Nullable
+            private final Template id;
+
+            LookupAllQuery(final String name, final Properties properties) {
+                this(name, properties, Template.forString(properties.getProperty("id")));
+            }
+
+            private LookupAllQuery(final String name, final Properties properties,
+                    @Nullable final Template id) {
+                super(name, properties, id.getVariables(), ImmutableList.of("size"));
+                this.id = id;
+            }
+
+            @Override
+            void doEvaluate(final Session session, final BindingSet input,
+                    final MapBindingSet output) throws Throwable {
+
+                final URI id = (URI) Statements.parseValue(this.id.instantiate(input),
+                        Namespaces.DEFAULT);
+
+                long numTriples = 0L;
+                try {
+                    numTriples += Record.encode(session.retrieve(KS.RESOURCE).ids(id).exec(),
+                            ImmutableList.of(KS.RESOURCE)).count();
+                    numTriples += Record.encode(
+                            session.retrieve(KS.MENTION).condition("ks:mentionOf = $$", id)
+                                    .limit(100000L).exec(), ImmutableList.of(KS.MENTION)).count();
+                    if (numTriples == 0) {
+                        LOGGER.warn("No results for LOOKUP ALL request, id " + id);
+                    }
+                } catch (final Throwable ex) {
+                    throw new RuntimeException("Failed LOOKUP ALL, id " + format(id), ex);
+                } finally {
+                    output.addBinding("size", FACTORY.createLiteral(numTriples));
+                }
+            }
         }
 
         private static class CountQuery extends Query {
@@ -289,9 +938,10 @@ public class QueryTestDriver {
             private CountQuery(final String name, final Properties properties,
                     @Nullable final Template condition) {
 
-                super(name, properties, condition.getVariables(), ImmutableList.of("records"));
+                super(name, properties, condition.getVariables(), ImmutableList.of("size"));
 
-                this.layer = (URI) Statements.parseValue(properties.getProperty("layer"));
+                this.layer = normalizeLayerURI((URI) Statements.parseValue(properties
+                        .getProperty("layer")));
                 this.condition = condition;
             }
 
@@ -303,8 +953,15 @@ public class QueryTestDriver {
                 long numResults = 0L;
                 try {
                     numResults = session.count(this.layer).condition(condition).exec();
+                    if (numResults == 0) {
+                        LOGGER.warn("No results for COUNT request, layer " + format(this.layer)
+                                + ", condition '" + condition + "'");
+                    }
+                } catch (final Throwable ex) {
+                    throw new RuntimeException("Count " + format(this.layer) + " where "
+                            + condition + " failed", ex);
                 } finally {
-                    output.addBinding("records", FACTORY.createLiteral(numResults));
+                    output.addBinding("size", FACTORY.createLiteral(numResults));
                 }
             }
 
@@ -322,7 +979,7 @@ public class QueryTestDriver {
 
             private SparqlQuery(final String name, final Properties properties,
                     final Template query) {
-                super(name, properties, query.getVariables(), ImmutableList.of("results"));
+                super(name, properties, query.getVariables(), ImmutableList.of("size"));
                 this.query = query;
                 this.form = detectQueryForm(query.getText());
             }
@@ -368,8 +1025,8 @@ public class QueryTestDriver {
                     final MapBindingSet output) throws Throwable {
 
                 long numResults = 0;
-                final Sparql operation = session.sparql(this.query.instantiate(input)).timeout(
-                        getTimeout());
+                final String queryString = this.query.instantiate(input);
+                final Sparql operation = session.sparql(queryString).timeout(getTimeout());
 
                 try {
                     switch (this.form) {
@@ -387,16 +1044,21 @@ public class QueryTestDriver {
                     default:
                         throw new Error();
                     }
+                    if (numResults == 0) {
+                        LOGGER.warn("No results for SPARQL request, query is\n" + queryString);
+                    }
+                    output.addBinding("size", FACTORY.createLiteral(numResults));
+                } catch (final Throwable ex) {
+                    throw new RuntimeException("Failed SPARQL, form " + this.form.toUpperCase()
+                            + ", query:\n" + queryString, ex);
                 } finally {
-                    output.addBinding("results", FACTORY.createLiteral(numResults));
                 }
             }
-
         }
 
         private static final class Template {
 
-            private static final Pattern PATTERN = Pattern.compile("${([^}]+)}");
+            private static final Pattern PATTERN = Pattern.compile("\\$\\{([^\\}]+)\\}");
 
             private static Template EMPTY = new Template("");
 
@@ -444,6 +1106,153 @@ public class QueryTestDriver {
                 }
                 return String.format(this.text, placeholderValues);
             }
+
+        }
+
+    }
+
+    private static final class Statistics {
+
+        private static final String EMPTY = String.format("%-8s", "");
+
+        private final DescriptiveStatistics queryMixTime;
+
+        private final Map<String, QueryInfo> queryInfos;
+
+        private final QueryInfo globalInfo;
+
+        private long elapsedTime;
+
+        public Statistics(final Iterable<String> queryNames) {
+            this.queryMixTime = new DescriptiveStatistics();
+            this.queryInfos = Maps.newLinkedHashMap();
+            this.globalInfo = new QueryInfo();
+            this.elapsedTime = 0L;
+            for (final String queryName : queryNames) {
+                this.queryInfos.put(queryName, new QueryInfo());
+            }
+        }
+
+        public synchronized void reportQueryCompletion(final String queryName,
+                final boolean failure, final long time, final long size) {
+            final QueryInfo info = this.queryInfos.get(queryName);
+            info.time.addValue(time);
+            this.globalInfo.time.addValue(time);
+            if (size >= 0) {
+                info.size.addValue(size);
+                this.globalInfo.size.addValue(size);
+            }
+            if (failure) {
+                ++info.numFailures;
+                ++this.globalInfo.numFailures;
+            }
+        }
+
+        public synchronized void reportQueryMixCompletion(final long time) {
+            this.queryMixTime.addValue(time);
+        }
+
+        public synchronized void reportElapsedTest(final long elapsedTime) {
+            this.elapsedTime = elapsedTime;
+        }
+
+        @Override
+        public synchronized String toString() {
+
+            // Compute sum of query execution times
+            long testTotalTime = 0;
+            for (final QueryInfo info : this.queryInfos.values()) {
+                testTotalTime += (long) info.time.getSum();
+            }
+
+            // Create and return a statistics table
+            final StringBuilder builder = new StringBuilder();
+            emitHeader(builder);
+            emitSeparator(builder);
+            for (final Map.Entry<String, QueryInfo> entry : this.queryInfos.entrySet()) {
+                emitStats(builder, testTotalTime, entry.getKey(), entry.getValue());
+            }
+            emitSeparator(builder);
+            emitStats(builder, testTotalTime, "query (avg)", this.globalInfo);
+            emitSeparator(builder);
+            emitStats(builder, testTotalTime, "query mix", (int) this.queryMixTime.getN(), -1,
+                    null, this.queryMixTime);
+            return builder.toString();
+        }
+
+        private void emitHeader(final StringBuilder builder) {
+
+            builder.append(String.format("%-12s%-16s%-64s%-64s%-24s%-16s\n", "", "   Executions",
+                    "     Result size [solutions, triples or bytes]", "     Execution time [ms]",
+                    "     Total time [ms]", "    Rate"));
+
+            builder.append(Strings.repeat(" ", 12));
+            for (final String field : new String[] { "Total", "Error", "Min", "Q1", "Q2", "Q3",
+                    "Max", "Geom", "Mean", "Std", "Min", "Q1", "Q2", "Q3", "Max", "Geom", "Mean",
+                    "Std", "Sum", "Clock", "Share", "/Sec", "/Hour" }) {
+                builder.append(String.format("%8s", field));
+            }
+            builder.append("\n");
+        }
+
+        private void emitSeparator(final StringBuilder builder) {
+            builder.append(Strings.repeat("-", 8 * 23 + 12)).append("\n");
+        }
+
+        private void emitStats(final StringBuilder builder, final long testTotalTime,
+                final String label, final QueryInfo info) {
+            emitStats(builder, testTotalTime, label, (int) info.time.getN(), info.numFailures,
+                    info.size, info.time);
+        }
+
+        private void emitStats(final StringBuilder builder, final long testTotalTime,
+                final String label, final int numSuccesses, final int numFailures,
+                @Nullable final DescriptiveStatistics size, final DescriptiveStatistics time) {
+
+            builder.append(String.format("%-12s", label));
+
+            builder.append(numSuccesses >= 0 ? String.format("%8d", numSuccesses) : EMPTY);
+            builder.append(numFailures >= 0 ? String.format("%8d", numFailures) : EMPTY);
+
+            if (size != null) {
+                builder.append(String.format("%8d%8d%8d%8d%8d%8.0f%8.0f%8.0f",
+                        (long) size.getMin(), (long) size.getPercentile(25),
+                        (long) size.getPercentile(50), (long) size.getPercentile(75),
+                        (long) size.getMax(), size.getGeometricMean(), size.getMean(),
+                        size.getStandardDeviation()));
+            } else {
+                builder.append(Strings.repeat(EMPTY, 8));
+            }
+
+            if (time != null) {
+                final long queryTotalTime = (long) time.getSum();
+                final double share = (double) queryTotalTime / testTotalTime;
+                final long elapsed = (long) (this.elapsedTime * share);
+                final double rate = 1000.0 * time.getN() / elapsed;
+
+                builder.append(String.format("%8d%8d%8d%8d%8d%8.0f%8.0f%8.0f",
+                        (long) time.getMin(), (long) time.getPercentile(25),
+                        (long) time.getPercentile(50), (long) time.getPercentile(75),
+                        (long) time.getMax(), time.getGeometricMean(), time.getMean(),
+                        time.getStandardDeviation()));
+
+                builder.append(String.format("%8d%8d%8.2f", queryTotalTime, elapsed, share));
+                builder.append(String.format("%8.2f%8.0f", rate, rate * 3600));
+
+            } else {
+                builder.append(Strings.repeat(EMPTY, 13));
+            }
+
+            builder.append("\n");
+        }
+
+        private static class QueryInfo {
+
+            public final DescriptiveStatistics time = new DescriptiveStatistics();
+
+            public final DescriptiveStatistics size = new DescriptiveStatistics();
+
+            public int numFailures;
 
         }
 

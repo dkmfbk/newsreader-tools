@@ -34,8 +34,13 @@
   </root>
 
   <logger
-    name="eu.fbk"
+    name="eu.fbk.nwrtools"
     level="INFO" />
+
+  <!-- To be removed once we make the KS dependent on RDFpro -->
+  <logger
+    name="org.openrdf.rio"
+    level="ERROR" />
 
   <logger
     name="status"

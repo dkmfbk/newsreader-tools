@@ -20,6 +20,16 @@
       <version>${rdfpro.version}</version>
     </dependency>
     <dependency>
+      <groupId>eu.fbk.rdfpro</groupId>
+      <artifactId>rdfpro-tql</artifactId>
+      <version>${rdfpro.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>eu.fbk.rdfpro</groupId>
+      <artifactId>rdfpro-jsonld</artifactId>
+      <version>${rdfpro.version}</version>
+    </dependency>
+    <dependency>
       <groupId>eu.fbk.knowledgestore</groupId>
       <artifactId>ks-client</artifactId>
       <version>${ks.version}</version>
@@ -141,6 +151,11 @@
       <scope>test</scope>
       <version>${jansi.version}</version>
     </dependency>
+    <dependency>
+      <groupId>org.apache.commons</groupId>
+      <artifactId>commons-math3</artifactId>
+      <version>${commons-math3.version}</version>
+    </dependency>
   </dependencies>
 
   <build>
@@ -178,6 +193,17 @@
           </descriptors>
         </configuration>
       </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-eclipse-plugin</artifactId>
+        <version>${eclipse-plugin.version}</version>
+        <configuration>
+          <downloadSources>true</downloadSources>
+          <downloadJavadocs>true</downloadJavadocs>
+          <useProjectReferences>true</useProjectReferences>
+          <failOnError>false</failOnError>
+        </configuration>
+      </plugin>
     </plugins>
   </build>
 
@@ -196,9 +222,9 @@
     <!-- <mapdb.version>0.9.11</mapdb.version> -->
     <!-- <fst.version>1.54</fst.version> -->
     <!-- <xz.version>1.5</xz.version> -->
-    <commons-math3.version>3.2</commons-math3.version>
+    <commons-math3.version>3.4.1</commons-math3.version>
     <commons-cli.version>1.2</commons-cli.version>
-    <ks.version>1.2-SNAPSHOT</ks.version>
+    <ks.version>1.4-SNAPSHOT</ks.version>
     <rdfpro.version>0.3-SNAPSHOT</rdfpro.version>
 
     <compiler-plugin.version>3.1</compiler-plugin.version>
