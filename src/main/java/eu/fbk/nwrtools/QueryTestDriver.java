@@ -5,6 +5,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Writer;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
@@ -101,6 +102,10 @@ public final class QueryTestDriver {
 
     private final byte[][] inputData;
 
+    private final File outputFile;
+
+    private final long seed;
+
     public static void main(final String... args) {
         try {
             MDC.put(MDC_CONTEXT, "main");
@@ -115,24 +120,28 @@ public final class QueryTestDriver {
                                     + "is supplied in a .tsv file.")
                     .withOption("c", "config", "the configuration file", "FILE",
                             CommandLine.Type.FILE_EXISTING, true, false, true)
-                    .withOption("s", "seed", "the seed controlling the selection of test cases",
-                            "NUM", CommandLine.Type.INTEGER, true, false, false)
-                    .withOption("o", "output", "the output TSV file", "FILE",
-                            CommandLine.Type.FILE, true, false, true)
+                    .withFooter(
+                            "Test configuration may be overridden by supplying additional "
+                                    + "property=value\narguments on the command line.")
                     .withLogger(LoggerFactory.getLogger("eu.fbk.nwrtools")).parse(args);
 
             final File configFile = cmd.getOptionValue("c", File.class);
-            final File outputFile = cmd.getOptionValue("o", File.class);
-            final long seed = cmd.getOptionValue("s", Long.class, 0L);
 
             final Properties config = new Properties();
             try (InputStream configStream = IO.read(configFile.getAbsolutePath())) {
                 config.load(configStream);
             }
 
-            try (Writer output = IO.utf8Writer(IO.buffer(IO.write(outputFile.getAbsolutePath())))) {
-                new QueryTestDriver(config, configFile.getParentFile()).run(seed, output);
+            for (final String arg : cmd.getArgs(String.class)) {
+                final int index = arg.indexOf('=');
+                if (index > 0) {
+                    final String name = arg.substring(0, index);
+                    final String value = arg.substring(index + 1);
+                    config.setProperty(name, value);
+                }
             }
+
+            new QueryTestDriver(config, configFile.getParentFile()).run();
 
         } catch (final Throwable ex) {
             CommandLine.fail(ex);
@@ -141,6 +150,19 @@ public final class QueryTestDriver {
 
     public QueryTestDriver(final Properties properties, @Nullable final File baseDir)
             throws IOException {
+
+        // Get base path
+        final Path base = (baseDir != null ? baseDir : new File(System.getProperty("user.dir")))
+                .toPath();
+
+        // Parse seed
+        this.seed = read(properties, "test.seed", Long.class, 0L);
+
+        // Parse file names
+        final String dataArg = read(properties, "test.data", String.class);
+        final String outputArg = read(properties, "test.out", String.class);
+        final File dataFile = base.resolve(Paths.get(dataArg)).toFile();
+        this.outputFile = outputArg == null ? null : base.resolve(Paths.get(outputArg)).toFile();
 
         // Parse server URL, username and password
         this.url = read(properties, "test.url", String.class);
@@ -156,7 +178,7 @@ public final class QueryTestDriver {
         this.warmupTime = read(properties, "test.warmuptime", Long.class, 3600L) * 1000;
         this.testTime = read(properties, "test.testtime", Long.class, 3600L) * 1000;
         this.clients = read(properties, "test.clients", Integer.class, 1);
-        LOGGER.info("{} mix(es), {} ms warmup; {} mix(es), {} ms test; {} client(s)",
+        LOGGER.info("{} mix(es), {} s warmup; {} mix(es), {} s test; {} client(s)",
                 this.warmupMixes, this.warmupTime / 1000, this.testMixes, this.testTime / 1000,
                 this.clients);
 
@@ -164,9 +186,6 @@ public final class QueryTestDriver {
         this.timeout = read(properties, "test.timeout", Long.class, -1L);
 
         // Parse test data
-        final File base = baseDir != null ? baseDir : new File(System.getProperty("user.dir"));
-        final File dataFile = base.toPath()
-                .resolve(Paths.get(read(properties, "test.data", String.class))).toFile();
         Preconditions.checkArgument(dataFile.exists(), "File " + dataFile + " does not exist");
         final List<byte[]> data = Lists.newArrayList();
         try (BufferedReader reader = new BufferedReader(IO.utf8Reader(IO.buffer(IO.read(dataFile
@@ -236,41 +255,51 @@ public final class QueryTestDriver {
         LOGGER.info("Output schema: {} attributes", this.outputVariables.size());
     }
 
-    public void run(final long seed, @Nullable final Writer writer) throws Throwable {
+    public void run() throws Throwable {
 
-        // Allocate a random number generator
-        final Random random = new Random(seed);
+        // Open writer if possible
+        final Writer writer = this.outputFile == null ? null : IO.utf8Writer(IO.buffer(IO
+                .write(this.outputFile.getAbsolutePath())));
 
-        // Take a timestamp and allocate data structure for computing statistics
-        final long ts = System.currentTimeMillis();
-        final List<String> queryNames = Lists.newArrayList();
-        for (final Query query : this.queries) {
-            queryNames.add(query.getName());
-        }
-        final Statistics stats = new Statistics(queryNames);
+        try {
+            // Allocate a random number generator
+            final Random random = new Random(this.seed);
 
-        // Log test started
-        LOGGER.info("Test started");
-
-        // Perform warmup (if enabled)
-        if (this.warmupMixes > 0) {
-            runClients(this.warmupMixes, this.warmupTime, random, "Warmup", null, null);
-        }
-
-        // Perform the real test (if enabled)
-        if (this.clients > 0 && this.testMixes > 0) {
-            if (writer != null) {
-                for (int i = 0; i < this.outputVariables.size(); ++i) {
-                    writer.write(i == 0 ? "?" : "\t?");
-                    writer.write(this.outputVariables.get(i));
-                }
-                writer.write("\n");
+            // Take a timestamp and allocate data structure for computing statistics
+            final long ts = System.currentTimeMillis();
+            final List<String> queryNames = Lists.newArrayList();
+            for (final Query query : this.queries) {
+                queryNames.add(query.getName());
             }
-            runClients(this.testMixes, this.testTime, random, "Measurement", writer, stats);
-        }
+            final Statistics stats = new Statistics(queryNames);
 
-        // Log test completion
-        LOGGER.info("Test completed in {} ms\n\n{}\n", System.currentTimeMillis() - ts, stats);
+            // Log test started
+            LOGGER.info("Test started");
+
+            // Perform warmup (if enabled)
+            if (this.warmupMixes > 0) {
+                runClients(this.warmupMixes, this.warmupTime, random, "Warmup", null, null);
+            }
+
+            // Perform the real test (if enabled)
+            if (this.clients > 0 && this.testMixes > 0) {
+                if (writer != null) {
+                    for (int i = 0; i < this.outputVariables.size(); ++i) {
+                        writer.write(i == 0 ? "?" : "\t?");
+                        writer.write(this.outputVariables.get(i));
+                    }
+                    writer.write("\n");
+                }
+                runClients(this.testMixes, this.testTime, random, "Measurement", writer, stats);
+            }
+
+            // Log test completion
+            LOGGER.info("Test completed in {} ms\n\n{}\n", System.currentTimeMillis() - ts, stats);
+
+        } finally {
+            // Close TSV file
+            IO.closeQuietly(writer);
+        }
     }
 
     private void runClients(final int maxMixes, final long maxTime, final Random random,
@@ -564,6 +593,8 @@ public final class QueryTestDriver {
     }
 
     private static abstract class Query {
+
+        private static final Logger LOGGER = LoggerFactory.getLogger(Query.class);
 
         private final String name;
 
