@@ -1,10 +1,8 @@
 package eu.fbk.nwrtools;
 
-import java.io.BufferedInputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.Charset;
 
@@ -16,9 +14,6 @@ import javax.xml.transform.stream.StreamResult;
 
 import com.sun.org.apache.xerces.internal.parsers.DOMParser;
 
-import org.apache.commons.compress.compressors.CompressorException;
-import org.apache.commons.compress.compressors.CompressorInputStream;
-import org.apache.commons.compress.compressors.CompressorStreamFactory;
 import org.slf4j.LoggerFactory;
 import org.w3c.dom.Element;
 import org.w3c.dom.NamedNodeMap;
@@ -28,6 +23,7 @@ import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 
 import eu.fbk.nwrtools.util.CommandLine;
+import eu.fbk.rdfpro.util.IO;
 
 public class NAFURICleaner {
 
@@ -93,8 +89,7 @@ public class NAFURICleaner {
         return uri;
     }
 
-    public void listFilesForFolder(final File folder) throws IOException, SAXException,
-            CompressorException {
+    public void listFilesForFolder(final File folder) throws IOException, SAXException {
         if (folder.isDirectory()) {
             for (final File fileEntry : folder.listFiles()) {
                 if (fileEntry.isDirectory()) {
@@ -131,17 +126,11 @@ public class NAFURICleaner {
         return "";
     }
 
-    public void parse(final File file) throws IOException, SAXException, CompressorException {
+    public void parse(final File file) throws IOException, SAXException {
         System.out.println("Opening... " + file);
         final DOMParser parser = new DOMParser();
-        if (file.getName().endsWith(".bz2")) {
-            final FileInputStream fin = new FileInputStream(file);
-            final BufferedInputStream bis = new BufferedInputStream(fin);
-            final CompressorInputStream input = new CompressorStreamFactory()
-                    .createCompressorInputStream(bis);
-            parser.parse(new InputSource(new InputStreamReader(input)));
-        } else {
-            parser.parse(file.getCanonicalPath());
+        try (InputStream is = IO.buffer(IO.read(file.getAbsolutePath()))) {
+            parser.parse(new InputSource(is));
         }
         final org.w3c.dom.Document doc = parser.getDocument();
 
@@ -205,6 +194,104 @@ public class NAFURICleaner {
         } catch (final Throwable ex) {
             CommandLine.fail(ex);
         }
+    }
+
+    public static String detectEncoding(final InputStream in) throws IOException {
+        String encoding = null;
+        in.mark(400);
+        int ignoreBytes = 0;
+        boolean readEncoding = false;
+        final byte[] buffer = new byte[400];
+        int read = in.read(buffer, 0, 4);
+        switch (buffer[0]) {
+        case (byte) 0x00:
+            if (buffer[1] == (byte) 0x00 && buffer[2] == (byte) 0xFE && buffer[3] == (byte) 0xFF) {
+                ignoreBytes = 4;
+                encoding = "UTF_32BE";
+            } else if (buffer[1] == (byte) 0x00 && buffer[2] == (byte) 0x00
+                    && buffer[3] == (byte) 0x3C) {
+                encoding = "UTF_32BE";
+                readEncoding = true;
+            } else if (buffer[1] == (byte) 0x3C && buffer[2] == (byte) 0x00
+                    && buffer[3] == (byte) 0x3F) {
+                encoding = "UnicodeBigUnmarked";
+                readEncoding = true;
+            }
+            break;
+        case (byte) 0xFF:
+            if (buffer[1] == (byte) 0xFE && buffer[2] == (byte) 0x00 && buffer[3] == (byte) 0x00) {
+                ignoreBytes = 4;
+                encoding = "UTF_32LE";
+            } else if (buffer[1] == (byte) 0xFE) {
+                ignoreBytes = 2;
+                encoding = "UnicodeLittleUnmarked";
+            }
+            break;
+
+        case (byte) 0x3C:
+            readEncoding = true;
+            if (buffer[1] == (byte) 0x00 && buffer[2] == (byte) 0x00 && buffer[3] == (byte) 0x00) {
+                encoding = "UTF_32LE";
+            } else if (buffer[1] == (byte) 0x00 && buffer[2] == (byte) 0x3F
+                    && buffer[3] == (byte) 0x00) {
+                encoding = "UnicodeLittleUnmarked";
+            } else if (buffer[1] == (byte) 0x3F && buffer[2] == (byte) 0x78
+                    && buffer[3] == (byte) 0x6D) {
+                encoding = "ASCII";
+            }
+            break;
+        case (byte) 0xFE:
+            if (buffer[1] == (byte) 0xFF) {
+                encoding = "UnicodeBigUnmarked";
+                ignoreBytes = 2;
+            }
+            break;
+        case (byte) 0xEF:
+            if (buffer[1] == (byte) 0xBB && buffer[2] == (byte) 0xBF) {
+                encoding = "UTF8";
+                ignoreBytes = 3;
+            }
+            break;
+        case (byte) 0x4C:
+            if (buffer[1] == (byte) 0x6F && buffer[2] == (byte) 0xA7 && buffer[3] == (byte) 0x94) {
+                encoding = "CP037";
+            }
+            break;
+        }
+        if (encoding == null) {
+            encoding = System.getProperty("file.encoding");
+            System.out.println(encoding);
+        }
+        if (readEncoding) {
+            read = in.read(buffer, 4, buffer.length - 4);
+            final Charset cs = Charset.forName(encoding);
+            final String s = new String(buffer, 4, read, cs);
+            final int pos = s.indexOf("encoding");
+            if (pos == -1) {
+                encoding = System.getProperty("file.encoding");
+                System.out.println(encoding);
+            } else {
+                char delim;
+                int start = s.indexOf(delim = '\'', pos);
+                if (start == -1) {
+                    start = s.indexOf(delim = '"', pos);
+                }
+                if (start == -1) {
+                    throw new IllegalArgumentException();
+                }
+                final int end = s.indexOf(delim, start + 1);
+                if (end == -1) {
+                    throw new IllegalArgumentException();
+                }
+                encoding = s.substring(start + 1, end);
+            }
+        }
+
+        in.reset();
+        while (ignoreBytes-- > 0) {
+            in.read();
+        }
+        return encoding;
     }
 
 }
