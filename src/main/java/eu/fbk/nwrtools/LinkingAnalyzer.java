@@ -1,13 +1,11 @@
 package eu.fbk.nwrtools;
 
 import java.io.File;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 import com.google.common.base.Charsets;
 import com.google.common.base.Preconditions;
+import com.google.common.base.Strings;
 import com.google.common.base.Throwables;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Lists;
@@ -17,8 +15,15 @@ import com.google.common.collect.Ordering;
 import com.google.common.collect.Sets;
 import com.google.common.io.Files;
 
+import eu.fbk.knowledgestore.KnowledgeStore;
+import eu.fbk.knowledgestore.Session;
+import eu.fbk.knowledgestore.client.Client;
+import eu.fbk.knowledgestore.data.Stream;
+import org.openrdf.model.Literal;
 import org.openrdf.model.URI;
+import org.openrdf.model.impl.LiteralImpl;
 import org.openrdf.model.impl.URIImpl;
+import org.openrdf.query.BindingSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,7 +34,7 @@ public class LinkingAnalyzer {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(LinkingAnalyzer.class);
 
-    private static final String TAXONOMY_QUERY = "" + //
+        private static final String TAXONOMY_QUERY = "" + //
             "  SELECT ?super ?sub\n" + //
             "  WHERE {\n" + //
             "    ?sub a owl:Class .\n" + //
@@ -46,6 +51,7 @@ public class LinkingAnalyzer {
             "    }\n" + //
             "  }\n" + //
             "  ORDER BY ?super ?sub";
+
 
     private static final String INSTANCES_QUERY = "" + //
             "  SELECT ?type\n" + //
@@ -67,61 +73,151 @@ public class LinkingAnalyzer {
             "    }\n" + //
             "  }\n" + //
             "  GROUP BY ?type\n" + //
-            "  HAVING (COUNT(DISTINCT ?d) >= %d)\n" + //
+            "  HAVING (COUNT(DISTINCT ?d) >= $$)\n" + //
             "  ORDER BY DESC(?documents)";
 
-    private final File occurrencesFile;
 
-    private final File taxonomyFile;
+    private static final String TAXONOMY_QUERY_NEW = "" + //
+            "  SELECT ?super ?sub\n" + //
+            "  WHERE {\n" + //
+            "    ?sub rdfs:subClassOf ?super .\n" + //
+            "    FILTER (?super != ?sub)\n" + //
+            "    ?super nwr:isClassDefinedBy dbo: .\n" + //
+            "    ?sub nwr:isClassDefinedBy dbo: .\n" + //
+            "    FILTER NOT EXISTS {\n" + //
+            "      ?class rdfs:subClassOf ?super .\n" + //
+            "      ?sub rdfs:subClassOf ?class .\n" + //
+            "      FILTER (?class != ?super && ?class != ?sub)\n" + //
+            "      ?class nwr:isClassDefinedBy dbo: .\n" + //
+            "    }\n" + //
+            "  }\n" + //
+            "  ORDER BY ?super ?sub";
 
-    private final int totalDocuments;
+    private static final String INSTANCES_QUERY_NEW = "" + //
+            "  SELECT ?type\n" + //
+            "         (COUNT(DISTINCT ?l) AS ?linkedEntities)\n" + //
+            "         (COUNT(DISTINCT ?e) AS ?totalEntities)\n" + //
+            "         (COUNT(DISTINCT ?d) AS ?documents)\n" + //
+            "  WHERE {\n" + //
+            "    {\n" + //
+            "      SELECT DISTINCT ?type WHERE {\n" + //
+            "        ?type  nwr:isClassDefinedBy dbo: .\n" + //
+            "      }\n" + //
+            "    }\n" + //
+            "    ?e a ?type .\n" + //
+            "    OPTIONAL {\n" + //
+            "      ?e gaf:denotedBy ?m .\n" + //
+            "      BIND (?e AS ?l)\n" + //
+            "      BIND (MD5(STRBEFORE(STR(?m), \"#\")) AS ?d)\n" + //
+            "    }\n" + //
+            "  }\n" + //
+            "  GROUP BY ?type\n" + //
+            "  HAVING (COUNT(DISTINCT ?d) >= $$)\n" + //
+            "  ORDER BY DESC(?documents)";
+
+    private static final String COUNT_DOCUMENTS = "" + //
+            "  SELECT (COUNT (DISTINCT ?doc) as ?num_doc)\n" + //
+            "  WHERE{\n" +//
+            "     ?a gaf:denotedBy ?m\n" +//
+            "     BIND (strbefore(str(?m),\"#char\") as ?doc)\n" + //
+            "  }";//
+
+
+    private final Session session;
+//    private final File occurrencesFile;
+//
+//
+//    private final File taxonomyFile;
+
+    private int totalDocuments;
+    private final int granularity;
 
     private final Map<URI, Type> types;
 
-    public LinkingAnalyzer(final File occurrencesFile, final File taxonomyFile,
-            final int totalDocuments) {
-        this.occurrencesFile = Preconditions.checkNotNull(occurrencesFile);
-        this.taxonomyFile = Preconditions.checkNotNull(taxonomyFile);
+    public LinkingAnalyzer(final Session session, final int totalDocuments, final int granularity) {
+        this.session = session;
+//        this.occurrencesFile = Preconditions.checkNotNull(occurrencesFile);
+//        this.taxonomyFile = Preconditions.checkNotNull(taxonomyFile);
         this.totalDocuments = totalDocuments;
+        this.granularity = granularity;
         this.types = Maps.newHashMap();
     }
 
     public String analyze() {
         try {
+            countDocuments();
             collectTypeOccurrences();
             collectTypeTaxonomy();
+            //System.out.println(this.types.toString());
             return formatReport();
+
         } catch (final Throwable ex) {
             throw Throwables.propagate(ex);
         }
     }
 
-    private void collectTypeOccurrences() throws Throwable {
-        for (final String line : Files.readLines(this.occurrencesFile, Charsets.UTF_8)) {
+
+    private void countDocuments() throws Throwable {
+        Stream<BindingSet> stream = session.sparql(COUNT_DOCUMENTS).timeout(10 * 60 * 1000L).execTuples();
+        List<BindingSet> tuples = stream.toList();
+        //@SuppressWarnings("unchecked");
+        //List<String> variables = stream.getProperty("variables", List.class);
+
+        for (BindingSet tuple : tuples) {
             try {
-                final String[] values = parseLine(line);
-                final URI uri = new URIImpl(values[0]);
-                final int entities = Integer.parseInt(values[1]);
-                final int totalEntities = Integer.parseInt(values[2]);
-                final int documents = Integer.parseInt(values[3]);
+                this.totalDocuments = ((Literal) tuple.getValue("num_doc")).intValue();
+                System.out.println("DOCUMENTS = " + this.totalDocuments);
+            } catch (final Throwable ex) {
+                LOGGER.warn("Ignoring instances line (" + ex.getMessage() + "): " + tuple.toString());
+            }
+        }
+    }
+
+    private void collectTypeOccurrences() throws Throwable {
+
+        //call query for instances
+
+        Stream<BindingSet> stream = session.sparql(INSTANCES_QUERY,this.granularity).timeout(10 * 60 * 1000L).execTuples();
+        List<BindingSet> tuples = stream.toList();
+        @SuppressWarnings("unchecked")
+        List<String> variables = stream.getProperty("variables", List.class);
+
+        for (BindingSet tuple : tuples) {
+            try {
+                final URI uri = new URIImpl(tuple.getValue("type").stringValue());
+                System.out.println(uri);
+                final int entities = ((Literal) tuple.getValue("linkedEntities")).intValue();
+                System.out.println(entities);
+                final int totalEntities = ((Literal) tuple.getValue("totalEntities")).intValue();
+                System.out.println(totalEntities);
+                final int documents = ((Literal) tuple.getValue("documents")).intValue();
+                System.out.println(documents);
                 Type type = this.types.get(uri);
                 if (type == null) {
                     type = new Type(uri, entities, totalEntities, documents);
                     this.types.put(uri, type);
                 }
             } catch (final Throwable ex) {
-                LOGGER.warn("Ignoring instances line (" + ex.getMessage() + "): " + line);
+                LOGGER.warn("Ignoring instances line (" + ex.getMessage() + "): " + tuple.toString());
             }
         }
     }
 
     private Multimap<URI, URI> collectTypeTaxonomy() throws Throwable {
         final Multimap<URI, URI> result = HashMultimap.create();
-        for (final String line : Files.readLines(this.taxonomyFile, Charsets.UTF_8)) {
+        //call query for taxonomy
+
+        Stream<BindingSet> stream = session.sparql(TAXONOMY_QUERY).timeout(10 * 60 * 1000L).execTuples();
+        List<BindingSet> tuples = stream.toList();
+        @SuppressWarnings("unchecked")
+        List<String> variables = stream.getProperty("variables", List.class);
+
+        for (BindingSet tuple : tuples) {
             try {
-                final String[] values = parseLine(line);
-                final URI parent = new URIImpl(values[0]);
-                final URI child = new URIImpl(values[1]);
+                //System.out.println(tuple.getBindingNames());
+                final URI parent = new URIImpl(tuple.getValue("super").stringValue());
+                final URI child = new URIImpl(tuple.getValue("sub").stringValue());
+                System.out.println(parent+" "+child);
                 final Type parentType = this.types.get(parent);
                 final Type childType = this.types.get(child);
                 if (parentType != null && childType != null) {
@@ -129,9 +225,10 @@ public class LinkingAnalyzer {
                     childType.parents.add(parent);
                 }
             } catch (final Throwable ex) {
-                LOGGER.warn("Ignoring taxonomy line (" + ex.getMessage() + "): " + line);
+                LOGGER.warn("Ignoring taxonomy line (" + ex.getMessage() + "): " + tuple.toString());
             }
         }
+
         return result;
     }
 
@@ -197,6 +294,7 @@ public class LinkingAnalyzer {
         final List<Type> children = Lists.newArrayList();
         for (final URI uri : type.children) {
             final Type child = this.types.get(uri);
+            System.out.println(child.uri.toString());
             if (child != null && child.entities <= type.entities) {
                 children.add(child);
             }
@@ -230,33 +328,64 @@ public class LinkingAnalyzer {
                     .withName("LinkingAnalyzer")
                     .withHeader(
                             "Generate an HTML report with statistics on linking of named entity to DBpedia")
-                    .withOption("i", "instances", "the instancesfile (see below)", "FILE",
-                            CommandLine.Type.FILE_EXISTING, true, false, true)
-                    .withOption("t", "taxonomy", "the taxonomy file (see below)", "FILE",
-                            CommandLine.Type.FILE_EXISTING, true, false, true)
-                    .withOption("d", "documents",
-                            "the total number of documents (for computing percentages)", "NUM",
+                    .withOption("s", "server", "the URL of the KS instance", "URL",
+                            CommandLine.Type.STRING, true, false, true)
+                    .withOption("u", "username", "the KS username (if required)", "USER",
+                            CommandLine.Type.STRING, true, false, false)
+                    .withOption("p", "password", "the KS password (if required)", "PWD",
+                            CommandLine.Type.STRING, true, false, false)
+//                    .withOption("d", "documents",
+//                            "the total number of documents (for computing percentages)", "NUM",
+//                            CommandLine.Type.INTEGER, true, false, true)
+                    .withOption("g", "granularity",
+                            "the granularity (number of documents) such that an instance is considered", "NUM2",
                             CommandLine.Type.INTEGER, true, false, true)
                     .withOption("o", "output", "the output file", "FILE", CommandLine.Type.FILE,
                             true, false, true)
-                    .withFooter(
-                            "The SPARQL query for producing the taxonomy file is:\n\n"
-                                    + TAXONOMY_QUERY
-                                    + "\n\nThe SPARQL query for producing the instances file is:\n\n"
-                                    + INSTANCES_QUERY
-                                    + "\n\nNote: in the above query, replace %d with the number corresponding to the\n"
-                                    + "minimum number of linked documents for a type to be reported.")
+//                    .withFooter(
+//                            "The SPARQL query for producing the taxonomy file is:\n\n"
+//                                    + TAXONOMY_QUERY
+//                                    + "\n\nThe SPARQL query for producing the instances file is:\n\n"
+//                                    + INSTANCES_QUERY
+//                                    + "\n\nNote: in the above query, replace %d with the number corresponding to the\n"
+//                                    + "minimum number of linked documents for a type to be reported.")
                     .withLogger(LoggerFactory.getLogger("eu.fbk.nwrtools")).parse(args);
 
-            final File instancesFile = cmd.getOptionValue("i", File.class);
-            final File taxonomyFile = cmd.getOptionValue("t", File.class);
+//            final File instancesFile = cmd.getOptionValue("i", File.class);
+//            final File taxonomyFile = cmd.getOptionValue("t", File.class);
             final File outputFile = cmd.getOptionValue("o", File.class);
             final int numDocuments = cmd.getOptionValue("d", Integer.class);
+            final int granularity = cmd.getOptionValue("g", Integer.class);
+            final String serverURL = cmd.getOptionValue("s", String.class);
+            final String username = Strings.emptyToNull(cmd.getOptionValue("u", String.class));
+            final String password = Strings.emptyToNull(cmd.getOptionValue("p", String.class));
 
-            final LinkingAnalyzer analyzer = new LinkingAnalyzer(instancesFile, taxonomyFile,
-                    numDocuments);
-            final String report = analyzer.analyze();
-            Files.write(report, outputFile, Charsets.UTF_8);
+
+            ///
+            //client and session for each query due to client bug
+            final KnowledgeStore ks = Client.builder(serverURL).compressionEnabled(true)
+                    .maxConnections(4).validateServer(false).connectionTimeout(600000).build();
+            try {
+
+
+                final Session session;
+                if (username != null && password != null) {
+                    session = ks.newSession(username, password);
+                } else {
+                    session = ks.newSession();
+                }
+                //download(session, outputFile, dumpResources, dumpMentions);
+                //queryFolder.newDirectoryStream();
+                final LinkingAnalyzer analyzer = new LinkingAnalyzer(session,
+                        numDocuments, granularity);
+                final String report = analyzer.analyze();
+                Files.write(report, outputFile, Charsets.UTF_8);
+
+                session.close();
+
+            } finally {
+                ks.close();
+            }
 
         } catch (final Throwable ex) {
             CommandLine.fail(ex);
@@ -296,5 +425,6 @@ public class LinkingAnalyzer {
         }
 
     }
+
 
 }
