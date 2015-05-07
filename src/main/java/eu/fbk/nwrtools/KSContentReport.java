@@ -32,7 +32,7 @@ public class KSContentReport {
                             CommandLine.Type.STRING, true, false, false)
                     .withOption("p", "password", "the KS password (if required)", "PWD",
                             CommandLine.Type.STRING, true, false, false)
-                    .withOption("q", "queries", "the queries directory", "DIR_Q", CommandLine.Type.DIRECTORY,
+                    .withOption("q", "queries", "the queries directory (files should have .qry extension", "DIR_Q", CommandLine.Type.DIRECTORY,
                             true, false, true)
                     .withOption("o", "output", "the output directory", "DIR_O", CommandLine.Type.DIRECTORY,
                             true, false, true)
