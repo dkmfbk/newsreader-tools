@@ -1,0 +1,5 @@
+#number of actor assertions
+SELECT (COUNT (*) as ?count)
+WHERE {
+	?e sem:hasActor ?a
+}

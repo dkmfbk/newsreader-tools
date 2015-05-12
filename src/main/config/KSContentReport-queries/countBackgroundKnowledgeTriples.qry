@@ -1,0 +1,5 @@
+SELECT (COUNT(*) AS ?n) 
+WHERE { 
+GRAPH ?g {?s ?p ?o} .
+?g dcq:source db:
+}

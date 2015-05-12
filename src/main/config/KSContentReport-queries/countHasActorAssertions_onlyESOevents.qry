@@ -1,0 +1,7 @@
+#number of actor assertions on eso events
+SELECT (COUNT ( * ) as ?count)
+WHERE {
+    ?e rdf:type sem:Event , ?type . 
+    ?type nwr:isClassDefinedBy eso: .
+	?e sem:hasActor ?a . 
+}

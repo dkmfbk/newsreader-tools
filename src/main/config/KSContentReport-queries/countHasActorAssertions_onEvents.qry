@@ -1,0 +1,6 @@
+#number of actor assertions
+SELECT (COUNT (*) as ?count)
+WHERE {
+           ?e rdf:type sem:Event .
+	?e sem:hasActor ?a
+}

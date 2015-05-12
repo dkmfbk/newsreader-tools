@@ -1,0 +1,7 @@
+#number of events with no actor and no place count
+SELECT (COUNT(DISTINCT ?event) as ?n)
+WHERE {
+   ?event rdf:type sem:Event .
+   FILTER NOT EXISTS {?event sem:hasPlace ?place }
+   FILTER NOT EXISTS {?event sem:hasActor ?actor }
+}

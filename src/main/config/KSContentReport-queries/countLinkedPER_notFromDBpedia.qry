@@ -1,0 +1,4 @@
+SELECT (Count(distinct ?a) as ?n)
+WHERE {
+?a rdf:type <http://www.newsreader-project.eu/ontologies/PER> . ?a <http://groundedannotationframework.org/gaf#denotedBy> ?d
+}

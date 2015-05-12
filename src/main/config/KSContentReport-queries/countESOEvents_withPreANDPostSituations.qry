@@ -1,0 +1,7 @@
+#ESO Events having at least pre AND post
+SELECT (COUNT ( DISTINCT ?e) as ?count)
+WHERE {
+?e rdf:type sem:Event , ?type . ?type nwr:isClassDefinedBy eso: .
+?e <http://www.newsreader-project.eu/domain-ontology#hasPreSituation>  ?p01 .
+?e <http://www.newsreader-project.eu/domain-ontology#hasPostSituation>   ?p02 . 
+}

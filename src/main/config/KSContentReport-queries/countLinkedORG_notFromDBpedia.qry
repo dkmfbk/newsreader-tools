@@ -1,0 +1,5 @@
+#distinct organisations (not DBpedia) mentioned in text
+SELECT (Count(distinct ?a) as ?n)
+WHERE {
+?a rdf:type <http://www.newsreader-project.eu/ontologies/ORG> . ?a <http://groundedannotationframework.org/gaf#denotedBy> ?d
+}

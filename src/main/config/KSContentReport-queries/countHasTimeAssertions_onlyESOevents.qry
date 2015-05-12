@@ -1,0 +1,7 @@
+# sem hasTime assetions only ESO
+SELECT (COUNT ( * ) as ?count)
+WHERE {
+    ?e rdf:type sem:Event , ?type . 
+    ?type nwr:isClassDefinedBy eso: .
+	?e sem:hasTime ?t 
+}

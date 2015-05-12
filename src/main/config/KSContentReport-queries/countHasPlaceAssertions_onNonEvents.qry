@@ -1,0 +1,6 @@
+#number of place assertions on non events
+SELECT (COUNT (*) as ?count)
+WHERE {
+	?e sem:hasPlace ?a .
+	FILTER NOT EXISTS {?e a sem:Event}
+}

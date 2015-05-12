@@ -1,0 +1,5 @@
+#denotedBy triples
+SELECT (Count(*) as ?n)
+WHERE {
+?a <http://groundedannotationframework.org/gaf#denotedBy> ?d
+}

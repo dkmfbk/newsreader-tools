@@ -129,16 +129,19 @@ public class LinkingAnalyzer {
 //
 //    private final File taxonomyFile;
 
+    private long timeoutMs;
     private int totalDocuments;
     private final int granularity;
 
     private final Map<URI, Type> types;
 
-    public LinkingAnalyzer(final Session session, final int totalDocuments, final int granularity) {
+    public LinkingAnalyzer(final Session session, final int granularity, final Integer timeoutSec) {
+
         this.session = session;
+        this.timeoutMs = timeoutSec*1000L;
 //        this.occurrencesFile = Preconditions.checkNotNull(occurrencesFile);
 //        this.taxonomyFile = Preconditions.checkNotNull(taxonomyFile);
-        this.totalDocuments = totalDocuments;
+        this.totalDocuments = 0;
         this.granularity = granularity;
         this.types = Maps.newHashMap();
     }
@@ -158,7 +161,7 @@ public class LinkingAnalyzer {
 
 
     private void countDocuments() throws Throwable {
-        Stream<BindingSet> stream = session.sparql(COUNT_DOCUMENTS).timeout(10 * 60 * 1000L).execTuples();
+        Stream<BindingSet> stream = session.sparql(COUNT_DOCUMENTS).timeout(this.timeoutMs).execTuples();
         List<BindingSet> tuples = stream.toList();
         //@SuppressWarnings("unchecked");
         //List<String> variables = stream.getProperty("variables", List.class);
@@ -177,7 +180,7 @@ public class LinkingAnalyzer {
 
         //call query for instances
 
-        Stream<BindingSet> stream = session.sparql(INSTANCES_QUERY,this.granularity).timeout(10 * 60 * 1000L).execTuples();
+        Stream<BindingSet> stream = session.sparql(INSTANCES_QUERY,this.granularity).timeout(this.timeoutMs).execTuples();
         List<BindingSet> tuples = stream.toList();
         @SuppressWarnings("unchecked")
         List<String> variables = stream.getProperty("variables", List.class);
@@ -207,7 +210,7 @@ public class LinkingAnalyzer {
         final Multimap<URI, URI> result = HashMultimap.create();
         //call query for taxonomy
 
-        Stream<BindingSet> stream = session.sparql(TAXONOMY_QUERY).timeout(10 * 60 * 1000L).execTuples();
+        Stream<BindingSet> stream = session.sparql(TAXONOMY_QUERY).timeout(this.timeoutMs).execTuples();
         List<BindingSet> tuples = stream.toList();
         @SuppressWarnings("unchecked")
         List<String> variables = stream.getProperty("variables", List.class);
@@ -342,6 +345,9 @@ public class LinkingAnalyzer {
                             CommandLine.Type.INTEGER, true, false, true)
                     .withOption("o", "output", "the output file", "FILE", CommandLine.Type.FILE,
                             true, false, true)
+                    .withOption("t", "timeout",
+                            "the timeout for each query in seconds", "NUM3",
+                            CommandLine.Type.INTEGER, true, false, true)
 //                    .withFooter(
 //                            "The SPARQL query for producing the taxonomy file is:\n\n"
 //                                    + TAXONOMY_QUERY
@@ -354,17 +360,18 @@ public class LinkingAnalyzer {
 //            final File instancesFile = cmd.getOptionValue("i", File.class);
 //            final File taxonomyFile = cmd.getOptionValue("t", File.class);
             final File outputFile = cmd.getOptionValue("o", File.class);
-            final int numDocuments = cmd.getOptionValue("d", Integer.class);
+            //final int numDocuments = cmd.getOptionValue("d", Integer.class);
             final int granularity = cmd.getOptionValue("g", Integer.class);
             final String serverURL = cmd.getOptionValue("s", String.class);
             final String username = Strings.emptyToNull(cmd.getOptionValue("u", String.class));
             final String password = Strings.emptyToNull(cmd.getOptionValue("p", String.class));
+            final int timeoutSec = cmd.getOptionValue("t", Integer.class);
 
 
             ///
             //client and session for each query due to client bug
             final KnowledgeStore ks = Client.builder(serverURL).compressionEnabled(true)
-                    .maxConnections(4).validateServer(false).connectionTimeout(600000).build();
+                    .maxConnections(4).validateServer(false).connectionTimeout(3*timeoutSec * 1000).build();
             try {
 
 
@@ -376,8 +383,7 @@ public class LinkingAnalyzer {
                 }
                 //download(session, outputFile, dumpResources, dumpMentions);
                 //queryFolder.newDirectoryStream();
-                final LinkingAnalyzer analyzer = new LinkingAnalyzer(session,
-                        numDocuments, granularity);
+                final LinkingAnalyzer analyzer = new LinkingAnalyzer(session, granularity, timeoutSec);
                 final String report = analyzer.analyze();
                 Files.write(report, outputFile, Charsets.UTF_8);
 

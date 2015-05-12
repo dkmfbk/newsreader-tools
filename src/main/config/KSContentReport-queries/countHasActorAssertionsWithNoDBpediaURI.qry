@@ -1,0 +1,6 @@
+#number of actor assertions to DBpedia URI
+SELECT (COUNT (*) as ?count)
+WHERE {
+?e rdf:type sem:Event .
+	?e sem:hasActor ?a . FILTER (!CONTAINS(STR(?a), "dbpedia.org"))
+}

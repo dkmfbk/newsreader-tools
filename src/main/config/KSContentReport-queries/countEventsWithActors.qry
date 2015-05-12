@@ -1,0 +1,6 @@
+#number of events with at least actor
+SELECT (COUNT(DISTINCT ?event) as ?n)
+WHERE {
+   ?event rdf:type sem:Event .
+   ?event sem:hasActor ?actor
+}

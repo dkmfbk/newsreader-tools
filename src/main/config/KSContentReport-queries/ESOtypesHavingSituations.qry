@@ -1,0 +1,10 @@
+#ESO Events (per type) having at least a pre / post / during
+SELECT ?type (COUNT ( DISTINCT ?e) as ?count)
+WHERE {
+	?e rdf:type sem:Event , ?type . FILTER (STRSTARTS(STR(?type), "http://www.newsreader-project.eu/domain-ontology"))
+{ ?e <http://www.newsreader-project.eu/domain-ontology#hasPreSituation>  ?p01 } UNION
+{ ?e <http://www.newsreader-project.eu/domain-ontology#hasPostSituation>   ?p02 } UNION
+{ ?e <http://www.newsreader-project.eu/domain-ontology#hasDuringSituation>   ?p03 }
+}
+GROUP BY ?type
+ORDER BY DESC(?count)

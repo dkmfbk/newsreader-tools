@@ -1,0 +1,6 @@
+#non ESO Events
+SELECT (COUNT ( DISTINCT ?e) as ?count)
+WHERE {
+?e rdf:type sem:Event .
+FILTER NOT EXISTS { ?e rdf:type ?type . ?type nwr:isClassDefinedBy eso: }
+}

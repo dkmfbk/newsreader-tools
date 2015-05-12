@@ -1,0 +1,11 @@
+#top 1000 pure misc
+SELECT ?a (Count(distinct ?d) as ?n)
+WHERE {
+?a a <http://www.newsreader-project.eu/ontologies/MISC> . ?a <http://groundedannotationframework.org/gaf#denotedBy> ?d
+FILTER NOT EXISTS { ?a a <http://www.newsreader-project.eu/ontologies/PER> . }
+FILTER NOT EXISTS { ?a a <http://www.newsreader-project.eu/ontologies/ORG> . }
+FILTER NOT EXISTS { ?a a <http://www.newsreader-project.eu/ontologies/LOC> . }
+}
+Group by ?a
+Order by DESC(?n)
+LIMIT 1000

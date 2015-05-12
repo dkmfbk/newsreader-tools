@@ -1,0 +1,7 @@
+#number of actor assertions
+SELECT (COUNT (*) as ?count)
+WHERE {
+	?e sem:hasActor ?a . 
+	FILTER NOT EXISTS {?e a sem:Event}
+	
+}

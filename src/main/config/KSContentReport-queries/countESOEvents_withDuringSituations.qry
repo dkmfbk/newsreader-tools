@@ -1,0 +1,6 @@
+#ESO Events having at least a during
+SELECT (COUNT ( DISTINCT ?e) as ?count)
+WHERE {
+?e rdf:type sem:Event , ?type . ?type nwr:isClassDefinedBy eso: .
+?e <http://www.newsreader-project.eu/domain-ontology#hasDuringSituation>   ?p03 .
+}

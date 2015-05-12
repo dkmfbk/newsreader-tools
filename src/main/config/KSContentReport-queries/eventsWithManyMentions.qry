@@ -1,0 +1,9 @@
+#events with many denoted by / mentions
+SELECT DISTINCT ?event (COUNT (?mentions) as ?nm)
+WHERE { 
+?event rdf:type sem:Event .
+?event gaf:denotedBy ?mentions .
+}
+GROUP BY ?event
+ORDER BY DESC(?nm)
+LIMIT 1000

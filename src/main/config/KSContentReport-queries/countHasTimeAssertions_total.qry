@@ -1,0 +1,6 @@
+# sem hasTime assetions
+SELECT (COUNT ( * ) as ?count)
+WHERE {
+        ?e rdf:type sem:Event .
+	?e sem:hasTime ?t 
+}

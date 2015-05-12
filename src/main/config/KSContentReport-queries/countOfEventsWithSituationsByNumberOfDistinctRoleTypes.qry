@@ -1,0 +1,15 @@
+#count Of Events with a Situation By Number Of Distinct Role Types
+SELECT ?num_roles (COUNT(DISTINCT ?e) as ?num_events) 
+WHERE {
+	SELECT ?e (COUNT(DISTINCT ?prop) as ?num_roles) 
+	WHERE {
+        ?e ?prop ?a .
+        ?prop nwr:isRolePropertyDefinedBy eso: .
+        { ?e <http://www.newsreader-project.eu/domain-ontology#hasPreSituation>  ?p01 } UNION
+		{ ?e <http://www.newsreader-project.eu/domain-ontology#hasPostSituation>   ?p02 } UNION
+		{ ?e <http://www.newsreader-project.eu/domain-ontology#hasDuringSituation>   ?p03 }
+	}
+	GROUP BY ?e
+}
+GROUP BY ?num_roles
+ORDER BY ?num_roles

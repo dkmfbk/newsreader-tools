@@ -1,0 +1,10 @@
+#most frequent eso types 
+SELECT ?eso_type (COUNT(?event) as ?n)
+WHERE {
+   ?event rdf:type sem:Event .
+   ?event rdf:type ?eso_type .
+   ?eso_type nwr:isClassDefinedBy eso: .
+}
+GROUP BY ?eso_type
+ORDER BY DESC(?n)
+LIMiT 1000

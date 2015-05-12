@@ -1,0 +1,6 @@
+#number of actor assertions to DBpedia URI on eso events
+SELECT (COUNT (*) as ?count)
+WHERE {
+?e rdf:type sem:Event .
+	?e sem:hasPlace ?a . FILTER (CONTAINS(STR(?a), "dbpedia.org"))
+}

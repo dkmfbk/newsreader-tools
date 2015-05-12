@@ -1,0 +1,8 @@
+#ESO Events having at least a pre / post / during
+SELECT (COUNT ( DISTINCT ?e) as ?count)
+WHERE {
+?e rdf:type sem:Event , ?type . ?type nwr:isClassDefinedBy eso: .
+{ ?e <http://www.newsreader-project.eu/domain-ontology#hasPreSituation>  ?p01 } UNION
+{ ?e <http://www.newsreader-project.eu/domain-ontology#hasPostSituation>   ?p02 } UNION
+{ ?e <http://www.newsreader-project.eu/domain-ontology#hasDuringSituation>   ?p03 }
+}

@@ -1,0 +1,5 @@
+#distinct organisations (DBpedia) mentioned in text
+SELECT (Count(distinct ?a) as ?n)
+WHERE {
+?a rdf:type dbo:Place . ?a <http://groundedannotationframework.org/gaf#denotedBy> ?d
+}

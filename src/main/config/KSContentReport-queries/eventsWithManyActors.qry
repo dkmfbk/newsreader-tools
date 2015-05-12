@@ -1,0 +1,8 @@
+#Events with many to actors
+SELECT ?event (COUNT(?actor) as ?n)
+WHERE {
+   ?event sem:hasActor ?actor
+}
+GROUP BY ?event
+ORDER By DESC(?n) 
+LIMIT 1000

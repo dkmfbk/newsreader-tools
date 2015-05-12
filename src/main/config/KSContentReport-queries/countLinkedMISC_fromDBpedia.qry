@@ -1,0 +1,10 @@
+#distinct organisations (DBpedia) mentioned in text
+SELECT (Count(distinct ?a) as ?n)
+WHERE {
+?a rdf:type ?type . 
+?type nwr:isClassDefinedBy dbo: . 
+FILTER NOT EXISTS {?a a dbo:Person}
+FILTER NOT EXISTS {?a a dbo:Organisation}
+FILTER NOT EXISTS {?a a dbo:Place}
+?a <http://groundedannotationframework.org/gaf#denotedBy> ?d
+}

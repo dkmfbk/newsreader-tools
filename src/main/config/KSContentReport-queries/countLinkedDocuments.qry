@@ -1,0 +1,6 @@
+#count linked documents
+SELECT (COUNT (DISTINCT ?doc) as ?num_doc)
+WHERE{
+?a gaf:denotedBy ?m
+BIND (strbefore(str(?m),"#char") as ?doc)
+}

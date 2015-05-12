@@ -1,0 +1,8 @@
+#things with many labels HEAVY
+SELECT ?entity (COUNT (DISTINCT ?label) as ?nlabel)
+WHERE {
+   ?entity rdfs:label ?label .
+}
+GROUP BY ?entity
+ORDER BY DESC(?nlabel)
+LIMIT 1000

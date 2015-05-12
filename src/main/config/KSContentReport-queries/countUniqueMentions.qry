@@ -1,0 +1,5 @@
+#unique mentions
+SELECT (Count(DISTINCT ?d) as ?n)
+WHERE {
+?a <http://groundedannotationframework.org/gaf#denotedBy> ?d
+}

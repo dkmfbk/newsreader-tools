@@ -1,0 +1,9 @@
+#multi-mentions (heavy)
+SELECT ?mention (COUNT(DISTINCT ?x) as ?n)
+WHERE {
+    ?x gaf:denotedBy ?mention
+}
+GROUP BY ?mention
+HAVING (COUNT(DISTINCT ?x)>1)
+ORDER BY DESC(?n)
+LIMIT 1000

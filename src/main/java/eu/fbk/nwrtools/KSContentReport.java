@@ -39,6 +39,9 @@ public class KSContentReport {
 //                    .withFooter(
 //                            "The RDF format and compression type is automatically detected based on the\n"
 //                                    + "file extension (e.g., 'tql.gz' = gzipped TQL file)")
+                    .withOption("t", "timeout",
+                            "the timeout for each query in seconds", "NUM",
+                            CommandLine.Type.INTEGER, true, false, true)
                     .withLogger(LoggerFactory.getLogger("eu.fbk.nwrtools")).parse(args);
 
             final String serverURL = cmd.getOptionValue("s", String.class);
@@ -47,22 +50,24 @@ public class KSContentReport {
 //            final boolean dumpResources = cmd.hasOption("r");
 //            final boolean dumpMentions = cmd.hasOption("m");
             final File queryFolder = cmd.getOptionValue("q", File.class);
+            final File outputFolder = cmd.getOptionValue("o", File.class);
+            final int timeoutSec = cmd.getOptionValue("t", Integer.class);
             if (queryFolder.exists() && queryFolder.isDirectory()) {
 
-                final File outputFolder = cmd.getOptionValue("o", File.class);
 
 
-                for (final File fileEntry : queryFolder.listFiles(new FilenameFilter() {
-                    public boolean accept(File dir, String name) {
-                        return name.toLowerCase().endsWith(".qry");
-                    }
-                })) {
 
-                    //client and session for each query due to client bug
-                    final KnowledgeStore ks = Client.builder(serverURL).compressionEnabled(true)
-                            .maxConnections(2).validateServer(false).connectionTimeout(600000).build();
-                    try {
+                //client and session for each query due to client bug
+                final KnowledgeStore ks = Client.builder(serverURL).compressionEnabled(true)
+                        .maxConnections(2).validateServer(false).connectionTimeout(timeoutSec * 1000).build();
+                try {
 
+
+                    for (final File fileEntry : queryFolder.listFiles(new FilenameFilter() {
+                        public boolean accept(File dir, String name) {
+                            return name.toLowerCase().endsWith(".qry");
+                        }
+                    })) {
 
                         final Session session;
                         if (username != null && password != null) {
@@ -73,12 +78,15 @@ public class KSContentReport {
                         //download(session, outputFile, dumpResources, dumpMentions);
                         //queryFolder.newDirectoryStream();
 
-                        execQuery(session, fileEntry, outputFolder);
-                        session.close();
 
-                    } finally {
-                        ks.close();
+                        execQuery(session, fileEntry, outputFolder, timeoutSec);
+
+                        session.close();
                     }
+
+                } finally {
+                    ks.close();
+
                 }
             }
 
@@ -87,7 +95,7 @@ public class KSContentReport {
         }
     }
 
-    private static void execQuery(final Session session, final File queryfile, final File resultfile) throws Throwable {
+    private static void execQuery(final Session session, final File queryfile, final File resultfile, final Integer timeoutSec) throws Throwable {
 
 
         String query= getQueryFromFile(queryfile);
@@ -97,7 +105,9 @@ public class KSContentReport {
 //        System.out.println(outputFile.getAbsoluteFile());
 //        System.out.println(outputFile.getAbsolutePath());
 
-        Stream<BindingSet> stream = session.sparql(query).timeout(10 * 60 * 1000L).execTuples();
+        Long timeoutMs = timeoutSec * 1000L;
+        System.out.println(timeoutMs);
+        Stream<BindingSet> stream = session.sparql(query).timeout(timeoutMs).execTuples();
 
         CSVWriter writer = new CSVWriter(new FileWriter(outputFile));
 

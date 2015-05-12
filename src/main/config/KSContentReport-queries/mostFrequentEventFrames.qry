@@ -1,0 +1,10 @@
+#most frequent frames 
+SELECT ?framenet_type (COUNT(?event) as ?n)
+WHERE {
+   ?event rdf:type sem:Event .
+   ?event rdf:type ?framenet_type .
+   ?framenet_type nwr:isClassDefinedBy framenet: .
+}
+GROUP BY ?framenet_type
+ORDER BY DESC(?n)
+LIMiT 1000

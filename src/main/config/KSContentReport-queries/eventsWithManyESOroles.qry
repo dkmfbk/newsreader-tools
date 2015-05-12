@@ -1,0 +1,9 @@
+# events with many ESO roles
+SELECT ?e (COUNT(?prop) as ?roles) 
+WHERE {
+        ?e ?prop ?a .
+        ?prop nwr:isRolePropertyDefinedBy eso: .
+}
+GROUP BY ?e
+ORDER BY DESC(?roles)
+LIMIT 1000

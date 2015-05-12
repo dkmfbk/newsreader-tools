@@ -1,0 +1,7 @@
+#number of eso events
+SELECT (COUNT(DISTINCT ?event) as ?n)
+WHERE {
+   ?event rdf:type sem:Event .
+   ?event rdf:type ?eso_type .
+   ?eso_type nwr:isEventClassDefinedBy eso: .
+}

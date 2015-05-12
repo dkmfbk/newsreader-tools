@@ -1,0 +1,9 @@
+#things with many labels HEAVY
+SELECT ?entity (COUNT (DISTINCT ?label) as ?nlabel)
+WHERE {
+   GRAPH ?g { ?entity rdfs:label ?label . }
+   FILTER NOT EXISTS {?g dcq:source db: }
+}
+GROUP BY ?entity
+ORDER BY DESC(?nlabel)
+LIMIT 1000

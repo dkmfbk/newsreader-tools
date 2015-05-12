@@ -1,0 +1,9 @@
+SELECT ?p (COUNT(*) AS ?n)
+WHERE {
+	GRAPH ?g {
+		?s ?p ?s .
+	}
+	?g a eso:Situation .
+} 
+GROUP BY ?p
+ORDER BY DESC (?n)

@@ -1,0 +1,12 @@
+#count Of Events By Number Of Distinct frame element Types
+SELECT ?num_roles (COUNT(DISTINCT ?e) as ?num_events) 
+WHERE {
+	SELECT ?e (COUNT(DISTINCT ?prop) as ?num_roles) 
+	WHERE {
+        ?e ?prop ?a .
+        ?prop nwr:isPropertyDefinedBy framenet:  .
+	}
+	GROUP BY ?e
+}
+GROUP BY ?num_roles
+ORDER BY ?num_roles
