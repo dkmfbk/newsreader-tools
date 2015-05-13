@@ -77,7 +77,7 @@ public class LinkingAnalyzer {
             "  ORDER BY DESC(?documents)";
 
 
-    private static final String TAXONOMY_QUERY_NEW = "" + //
+    private static final String TAXONOMY_QUERY_ANN = "" + //
             "  SELECT ?super ?sub\n" + //
             "  WHERE {\n" + //
             "    ?sub rdfs:subClassOf ?super .\n" + //
@@ -93,7 +93,7 @@ public class LinkingAnalyzer {
             "  }\n" + //
             "  ORDER BY ?super ?sub";
 
-    private static final String INSTANCES_QUERY_NEW = "" + //
+    private static final String INSTANCES_QUERY_ANN = "" + //
             "  SELECT ?type\n" + //
             "         (COUNT(DISTINCT ?l) AS ?linkedEntities)\n" + //
             "         (COUNT(DISTINCT ?e) AS ?totalEntities)\n" + //
@@ -371,7 +371,7 @@ public class LinkingAnalyzer {
             ///
             //client and session for each query due to client bug
             final KnowledgeStore ks = Client.builder(serverURL).compressionEnabled(true)
-                    .maxConnections(4).validateServer(false).connectionTimeout(3*timeoutSec * 1000).build();
+                    .maxConnections(4).validateServer(false).connectionTimeout(3*   timeoutSec * 1000).build();
             try {
 
 
