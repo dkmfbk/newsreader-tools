@@ -57,7 +57,7 @@ public class KSContentReport {
 
 
 
-                //client and session for each query due to client bug
+                //one client for all queries
                 final KnowledgeStore ks = Client.builder(serverURL).compressionEnabled(true)
                         .maxConnections(2).validateServer(false).connectionTimeout(timeoutSec * 1000).build();
                 try {
@@ -69,6 +69,7 @@ public class KSContentReport {
                         }
                     })) {
 
+                        //one session for each query
                         final Session session;
                         if (username != null && password != null) {
                             session = ks.newSession(username, password);

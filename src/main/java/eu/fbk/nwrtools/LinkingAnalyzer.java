@@ -369,7 +369,7 @@ public class LinkingAnalyzer {
 
 
             ///
-            //client and session for each query due to client bug
+            //one client and session for all 3 queries
             final KnowledgeStore ks = Client.builder(serverURL).compressionEnabled(true)
                     .maxConnections(4).validateServer(false).connectionTimeout(3*   timeoutSec * 1000).build();
             try {
