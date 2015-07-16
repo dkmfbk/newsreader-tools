@@ -1,0 +1,8 @@
+#return documents by number of mentions HEAVY
+SELECT ?doc (COUNT(*) as ?nm)
+WHERE{
+?a gaf:denotedBy ?m
+BIND (strbefore(str(?m),"#char") as ?doc)
+}
+GROUP BY ?doc
+ORDER BY ?nm

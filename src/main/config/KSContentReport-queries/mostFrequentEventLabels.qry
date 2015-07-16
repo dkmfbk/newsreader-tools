@@ -1,5 +1,5 @@
 #most frequent event labels / predicates
-SELECT ?label (COUNT(?events) AS ?n)
+SELECT ?label (COUNT(DISTINCT ?events) AS ?n)
 WHERE {
 ?events a sem:Event .
 ?events <http://www.w3.org/2000/01/rdf-schema#label> ?label .

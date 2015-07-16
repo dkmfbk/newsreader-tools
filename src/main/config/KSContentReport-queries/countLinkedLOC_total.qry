@@ -1,7 +1,9 @@
-#distinct organisations mentioned in text
+#distinct organisations mentioned in text LOC or LOCATION
 SELECT (Count(distinct ?a) as ?n)
 WHERE {
 {?a rdf:type <http://www.newsreader-project.eu/ontologies/LOC> . ?a <http://groundedannotationframework.org/gaf#denotedBy> ?d}
+UNION 
+{?a rdf:type <http://www.newsreader-project.eu/ontologies/LOCATION> . ?a <http://groundedannotationframework.org/gaf#denotedBy> ?d}
 UNION
 {?a rdf:type dbo:Place . ?a <http://groundedannotationframework.org/gaf#denotedBy> ?d}
 }

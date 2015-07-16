@@ -1,7 +1,7 @@
 #number of actor assertions to DBpedia actor on eso events
 SELECT (COUNT ( * ) as ?count)
 WHERE {
-    ?e rdf:type sem:Event , ?type . 
-    ?type nwr:isClassDefinedBy eso: .
+   ?e rdf:type sem:Event
+   FILTER EXISTS {?e rdf:type ?type . ?type nwr:isClassDefinedBy eso: .}
 	?e sem:hasPlace ?a . FILTER (CONTAINS(STR(?a), "dbpedia.org"))
 }

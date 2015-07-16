@@ -3,7 +3,7 @@ SELECT ?framenet_type (COUNT(DISTINCT ?event) as ?n)
 WHERE {
    ?event rdf:type sem:Event .
    ?event rdf:type ?framenet_type .
-   ?framenet_type nwr:isClassDefinedBy framenet: .
+   ?framenet_type nwr:isClassDefinedBy <http://www.newsreader-project.eu/ontologies/propbank/> .
 }
 GROUP BY ?framenet_type
 ORDER BY DESC(?n)

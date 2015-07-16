@@ -1,6 +1,9 @@
+# PER or PERSON
 SELECT (Count(distinct ?a) as ?n)
 WHERE {
 {?a rdf:type <http://www.newsreader-project.eu/ontologies/PER> . ?a <http://groundedannotationframework.org/gaf#denotedBy> ?d}
+UNION
+{?a rdf:type <http://www.newsreader-project.eu/ontologies/PERSON> . ?a <http://groundedannotationframework.org/gaf#denotedBy> ?d}
 UNION
 {?a rdf:type dbo:Person . ?a <http://groundedannotationframework.org/gaf#denotedBy> ?d}
 }

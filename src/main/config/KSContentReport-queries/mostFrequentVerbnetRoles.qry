@@ -1,0 +1,8 @@
+#most frequent frame elements
+SELECT ?role (COUNT(*) AS ?n) 
+WHERE { 
+?a ?role ?p .
+?role nwr:isPropertyDefinedBy <http://www.newsreader-project.eu/ontologies/verbnet/>  
+}
+GROUP BY ?role
+ORDER BY DESC(?n)

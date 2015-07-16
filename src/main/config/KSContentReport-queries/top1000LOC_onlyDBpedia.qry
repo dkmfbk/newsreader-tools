@@ -1,0 +1,8 @@
+#top 1000 linked locations from DBpedia or not 
+SELECT ?a (Count(distinct ?d) as ?n)
+WHERE {
+?a rdf:type dbo:Place . ?a <http://groundedannotationframework.org/gaf#denotedBy> ?d
+}
+Group by ?a
+Order by DESC(?n)
+LIMIT 1000
