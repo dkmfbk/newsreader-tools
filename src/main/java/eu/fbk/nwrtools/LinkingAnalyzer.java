@@ -119,7 +119,7 @@ public class LinkingAnalyzer {
             "  SELECT (COUNT (DISTINCT ?doc) as ?num_doc)\n" + //
             "  WHERE{\n" +//
             "     ?a gaf:denotedBy ?m\n" +//
-            "     BIND (strbefore(str(?m),\"#char\") as ?doc)\n" + //
+            "     BIND (MD5(strbefore(str(?m),\"#char\")) as ?doc)\n" + //
             "  }";//
 
 
