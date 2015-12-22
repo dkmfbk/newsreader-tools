@@ -1,0 +1,9 @@
+# events with many ESO roles
+SELECT ?e (COUNT(?type) as ?ntype) 
+WHERE {
+        ?e rdf:type ?type .
+        ?type nwr:isClassDefinedBy eso: .
+}
+GROUP BY ?e
+ORDER BY DESC(?ntype)
+LIMIT 1000

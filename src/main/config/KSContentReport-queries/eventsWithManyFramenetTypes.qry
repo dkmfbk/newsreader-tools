@@ -1,0 +1,9 @@
+# events with many framenet
+SELECT ?e (COUNT(?type) as ?ntype) 
+WHERE {
+        ?e rdf:type ?type .
+        ?type nwr:isClassDefinedBy framenet: .
+}
+GROUP BY ?e
+ORDER BY DESC(?ntype)
+LIMIT 1000

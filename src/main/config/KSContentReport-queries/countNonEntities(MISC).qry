@@ -1,0 +1,3 @@
+#Count non entities
+SELECT (COUNT(DISTINCT ?entity) as ?n)
+WHERE {?entity a <http://www.newsreader-project.eu/ontologies/NONENTITY>}

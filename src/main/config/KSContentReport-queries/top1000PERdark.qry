@@ -1,0 +1,11 @@
+#top 1000 linked person from DBpedia or not 
+SELECT ?a (Count(distinct ?d) as ?n)
+WHERE {
+{?a rdf:type <http://www.newsreader-project.eu/ontologies/PER> . ?a <http://groundedannotationframework.org/gaf#denotedBy> ?d}
+UNION
+{?a rdf:type <http://www.newsreader-project.eu/ontologies/PERSON> . ?a <http://groundedannotationframework.org/gaf#denotedBy> ?d}
+FILTER NOT EXISTS {?a rdf:type ?type . ?a rdfs:isDefinedBy dbo:}
+}
+Group by ?a
+Order by DESC(?n)
+LIMIT 1000

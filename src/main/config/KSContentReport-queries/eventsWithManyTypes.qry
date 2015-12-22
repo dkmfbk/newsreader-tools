@@ -1,0 +1,8 @@
+# events with many types
+SELECT ?e (COUNT(DISTINCT ?type) as ?ntype) 
+WHERE {
+        ?e a sem:Event , ?type .
+}
+GROUP BY ?e
+ORDER BY DESC(?ntype)
+LIMIT 1000

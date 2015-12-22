@@ -1,0 +1,16 @@
+#dark entities
+SELECT (COUNT (DISTINCT ?a) as ?n)
+WHERE {
+{?a rdf:type <http://www.newsreader-project.eu/ontologies/LOC> . ?a <http://groundedannotationframework.org/gaf#denotedBy> ?d}
+UNION 
+{?a rdf:type <http://www.newsreader-project.eu/ontologies/LOCATION> . ?a <http://groundedannotationframework.org/gaf#denotedBy> ?d}
+UNION 
+{?a rdf:type <http://www.newsreader-project.eu/ontologies/ORGANIZATION> . ?a <http://groundedannotationframework.org/gaf#denotedBy> ?d}
+UNION
+{?a rdf:type <http://www.newsreader-project.eu/ontologies/ORG> . ?a <http://groundedannotationframework.org/gaf#denotedBy> ?d}
+UNION
+{?a rdf:type <http://www.newsreader-project.eu/ontologies/PER> . ?a <http://groundedannotationframework.org/gaf#denotedBy> ?d}
+UNION
+{?a rdf:type <http://www.newsreader-project.eu/ontologies/PERSON> . ?a <http://groundedannotationframework.org/gaf#denotedBy> ?d}
+FILTER NOT EXISTS {?a rdf:type ?type . ?a rdfs:isDefinedBy dbo:}
+}

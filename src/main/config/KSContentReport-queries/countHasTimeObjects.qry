@@ -1,0 +1,2 @@
+SELECT (COUNT(DISTINCT ?time) as ?n)
+WHERE {?event sem:hasTime ?time}
