@@ -14,6 +14,8 @@ KSContentReport -s server_url -u user -p password -q query_folder -o output_file
 ```
 KS Content Report runs arbitrary analytic queries against a running KnowledgeStore instance, such as the most frequent FrameNet frame extracted in the news, the most cited DBpedia person, organization, and location in the news, etc. Queries are read at run-time from a folder, where each SPARQL query should be inserted in a single text file with extension ".qry". A predefined set of queries is available in /src/main/config/KSContentReport-queries .
 
+**2. KS Dumper**
+
 ```
 ks-dump -s server_url -o output_file -u user -p password [-r] [-m]
 ```
