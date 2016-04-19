@@ -2,15 +2,24 @@ package eu.fbk.nwrtools;
 
 import au.com.bytecode.opencsv.CSVWriter;
 import com.google.common.base.Strings;
-import eu.fbk.knowledgestore.KnowledgeStore;
-import eu.fbk.knowledgestore.Session;
+import eu.fbk.knowledgestore.*;
 import eu.fbk.knowledgestore.client.Client;
 import eu.fbk.knowledgestore.data.Stream;
+import eu.fbk.knowledgestore.internal.jaxrs.Protocol;
+import eu.fbk.knowledgestore.internal.rdf.RDFUtil;
 import eu.fbk.nwrtools.util.CommandLine;
+import eu.fbk.rdfpro.tql.TQL;
+import org.openrdf.model.Statement;
 import org.openrdf.query.BindingSet;
+import org.openrdf.query.TupleQueryResult;
+import org.openrdf.rio.RDFFormat;
+import org.openrdf.rio.RDFHandlerException;
+import org.openrdf.rio.RDFWriter;
+import org.openrdf.rio.Rio;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.ws.rs.core.GenericType;
 import java.io.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -101,35 +110,97 @@ public class KSContentReport {
 
         String query= getQueryFromFile(queryfile);
 
-        File outputFile = new File(resultfile.getAbsolutePath() + File.separator +queryfile.getName().replace(".qry", "") + "_results.csv");
-//        System.out.println(outputFile.getName());
-//        System.out.println(outputFile.getAbsoluteFile());
-//        System.out.println(outputFile.getAbsolutePath());
+        final String form;
+        try {
+            form = RDFUtil.detectSparqlForm(query);
 
-        Long timeoutMs = timeoutSec * 1000L;
-        System.out.println(timeoutMs);
-        Stream<BindingSet> stream = session.sparql(query).timeout(timeoutMs).execTuples();
 
-        CSVWriter writer = new CSVWriter(new FileWriter(outputFile));
+            if (form.equals("construct") || form.equals("describe")) {
+                File outputFile = new File(resultfile.getAbsolutePath() + File.separator +queryfile.getName().replace(".qry", "") + "_results.tql");
 
-        List<BindingSet> tuples = stream.toList();
-        @SuppressWarnings("unchecked")
-        List<String> variables = stream.getProperty("variables", List.class);
-        stream.close();
-        for (BindingSet tuple : tuples) {
-            System.out.println(tuple.toString());
-            //Set<String> bindingNames = tuple.getBindingNames();
-            List<String> record=new ArrayList<String>();;
-            for (String var : variables) {
-                //System.out.println(tuple.getValue(var).toString());
-                record.add(tuple.getValue(var).toString());
+                Long timeoutMs = timeoutSec * 1000L;
+                System.out.println(timeoutMs);
+
+                Stream<Statement> stream = session.sparql(query).timeout(timeoutMs).execTriples();
+                List<Statement> statements = stream.toList();
+                stream.close();
+
+                OutputStream output;
+                output = new BufferedOutputStream(new FileOutputStream(outputFile));  //clears file every time
+
+                RDFWriter rdf_output = Rio.createWriter(TQL.FORMAT,output);
+                rdf_output.startRDF();
+
+
+
+                for (Statement statement : statements) {
+                    rdf_output.handleStatement(statement);
+                }
+
+                rdf_output.endRDF();
+                output.flush();
+                output.close();
+
+            } else if (form.equals("select")) {
+//            OLD CODE
+//            File outputFile = new File(resultfile.getAbsolutePath() + File.separator +queryfile.getName().replace(".qry", "") + "_results.csv");
+//
+//            Long timeoutMs = timeoutSec * 1000L;
+//            System.out.println(timeoutMs);
+//            Stream<BindingSet> stream = session.sparql(query).timeout(timeoutMs).execTuples();
+//
+//            CSVWriter writer = new CSVWriter(new FileWriter(outputFile));
+//
+//            List<BindingSet> tuples = stream.toList();
+//            @SuppressWarnings("unchecked")
+//            List<String> variables = stream.getProperty("variables", List.class);
+//            stream.close();
+//            for (BindingSet tuple : tuples) {
+//                System.out.println(tuple.toString());
+//                List<String> record=new ArrayList<String>();;
+//                for (String var : variables) {
+//                    record.add(tuple.getValue(var).toString());
+//                }
+//                writer.writeNext(record.toArray(new String[record.size()]));
+//
+//            }
+//
+//            writer.flush();
+//            writer.close();
+
+
+                File outputFile = new File(resultfile.getAbsolutePath() + File.separator +queryfile.getName().replace(".qry", "") + "_results.tsv");
+                Long timeoutMs = timeoutSec * 1000L;
+                System.out.println(timeoutMs);
+
+
+                Stream<BindingSet> stream = session.sparql(query).timeout(timeoutMs).execTuples();
+
+                OutputStream output;
+                output = new BufferedOutputStream(new FileOutputStream(outputFile));  //clears file every time
+
+                RDFUtil.writeSparqlTuples(org.openrdf.query.resultio.TupleQueryResultFormat.TSV,output,stream);
+
+
+
+//                List<BindingSet> tuples = stream.toList();
+//                @SuppressWarnings("unchecked")
+//                List<String> variables = stream.getProperty("variables", List.class);
+//                stream.close();
+
+
+
+            } else {
+                System.out.printf("Query not supported");
             }
-            writer.writeNext(record.toArray(new String[record.size()]));
+
+
+
+        } catch (final RuntimeException ex) {
 
         }
 
-        writer.flush();
-        writer.close();
+
 
     }
 
