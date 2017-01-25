@@ -84,31 +84,24 @@ public class LinkingAnalyzer {
             "    ?super a rdfs:Class .\n" + //
             "    ?sub rdfs:subClassOf ?super .\n" + //
             "    FILTER (?super != ?sub)\n" + //
-            "    FILTER (STRSTARTS(STR(?super), \"http://yago-knowledge.org/resource/\"))\n" + //
-            "    FILTER (STRSTARTS(STR(?sub), \"http://yago-knowledge.org/resource/\"))\n" + //
+            "    ?super <http://dkm.fbk.eu/ontologies/newsreader#isClassDefinedBy> yago: .\n" + //
+            "    ?sub <http://dkm.fbk.eu/ontologies/newsreader#isClassDefinedBy> yago: .\n" + //
             "    FILTER NOT EXISTS {\n" + //
             "      ?class rdfs:subClassOf ?super .\n" + //
             "      ?sub rdfs:subClassOf ?class .\n" + //
             "      FILTER (?class != ?super && ?class != ?sub)\n" + //
-            "      FILTER (STRSTARTS(STR(?class), \"http://yago-knowledge.org/resource/\"))\n" + //
+            "      ?class <http://dkm.fbk.eu/ontologies/newsreader#isClassDefinedBy> yago: ." + //
             "    }\n" + //
             "  }\n" + //
             "  ORDER BY ?super ?sub";
 
 
     private static final String INSTANCES_QUERY_YAGO = "" + //
-            "  SELECT ?type\n" + //
-            "         (COUNT(DISTINCT ?e) AS ?totalEntities)\n" + //
+            "  SELECT ?type ?totalEntities\n" + //
             "  WHERE {\n" + //
-            "    {\n" + //
-            "      SELECT DISTINCT ?type WHERE {\n" + //
-            "        ?type a rdfs:Class .\n" + //
-            "        FILTER (STRSTARTS(STR(?type), \"http://yago-knowledge.org/resource/\"))\n" + //
-            "      }\n" + //
-            "    }\n" + //
-            "    ?e a ?type .\n" + //
+            "    ?type <http://pikes.fbk.eu/instanceCount> ?totalEntities .\n" + //
+            "    ?type <http://dkm.fbk.eu/ontologies/newsreader#isClassDefinedBy> yago: .\n" + //
             "  }\n" + //
-            "  GROUP BY ?type\n" + //
             "  ORDER BY DESC(?totalEntities)";
 
 
@@ -173,10 +166,11 @@ public class LinkingAnalyzer {
     private long timeoutMs;
     private int totalDocuments;
     private final int granularity;
+    private final int hierarchyDepth;
 
     private final Map<URI, Type> types;
 
-    public LinkingAnalyzer(final Session session, final int granularity, final Integer timeoutSec) {
+    public LinkingAnalyzer(final Session session, final int granularity, final int  hierarchyDepth, final Integer timeoutSec) {
 
         this.session = session;
         this.timeoutMs = timeoutSec*1000L;
@@ -184,13 +178,17 @@ public class LinkingAnalyzer {
 //        this.taxonomyFile = Preconditions.checkNotNull(taxonomyFile);
         this.totalDocuments = 0;
         this.granularity = granularity;
+        this.hierarchyDepth = hierarchyDepth;
         this.types = Maps.newHashMap();
     }
 
     public String analyze() {
         try {
             //countDocuments();
+            //System.out.println(this.INSTANCES_QUERY_YAGO);
             collectTypeOccurrences();
+            //System.out.println("Classes: "+this.types.keySet().size());
+            //System.out.println(this.TAXONOMY_QUERY_YAGO);
             collectTypeTaxonomy();
             //System.out.println(this.types.toString());
             return formatReport();
@@ -223,15 +221,17 @@ public class LinkingAnalyzer {
 
         Stream<BindingSet> stream = session.sparql(INSTANCES_QUERY_YAGO).timeout(this.timeoutMs).execTuples();
         List<BindingSet> tuples = stream.toList();
+        System.out.println("Instance Triples: "+tuples.size());
         @SuppressWarnings("unchecked")
+
         List<String> variables = stream.getProperty("variables", List.class);
 
         for (BindingSet tuple : tuples) {
             try {
                 final URI uri = new URIImpl(tuple.getValue("type").stringValue());
-                System.out.println(uri);
+                //System.out.println(uri);
                 final int totalEntities = ((Literal) tuple.getValue("totalEntities")).intValue();
-                System.out.println(totalEntities);
+                //System.out.println(totalEntities);
                 Type type = this.types.get(uri);
                 if (type == null) {
                     type = new Type(uri, 0, totalEntities, 0);
@@ -241,6 +241,7 @@ public class LinkingAnalyzer {
                 LOGGER.warn("Ignoring instances line (" + ex.getMessage() + "): " + tuple.toString());
             }
         }
+        //System.out.println(this.types.keySet().size());
     }
 
     private Multimap<URI, URI> collectTypeTaxonomy() throws Throwable {
@@ -249,6 +250,7 @@ public class LinkingAnalyzer {
 
         Stream<BindingSet> stream = session.sparql(TAXONOMY_QUERY_YAGO).timeout(this.timeoutMs).execTuples();
         List<BindingSet> tuples = stream.toList();
+        System.out.println("Taxo Triples: "+tuples.size());
         @SuppressWarnings("unchecked")
         List<String> variables = stream.getProperty("variables", List.class);
 
@@ -257,18 +259,30 @@ public class LinkingAnalyzer {
                 //System.out.println(tuple.getBindingNames());
                 final URI parent = new URIImpl(tuple.getValue("super").stringValue());
                 final URI child = new URIImpl(tuple.getValue("sub").stringValue());
-                System.out.println(parent+" "+child);
+                //System.out.println(parent+" "+child);
                 final Type parentType = this.types.get(parent);
                 final Type childType = this.types.get(child);
                 if (parentType != null && childType != null) {
                     parentType.children.add(child);
                     childType.parents.add(parent);
+                    //this.types.put(parent,parentType);
+                    //this.types.put(child,childType);
                 }
+
             } catch (final Throwable ex) {
                 LOGGER.warn("Ignoring taxonomy line (" + ex.getMessage() + "): " + tuple.toString());
             }
         }
-
+//        int children =0;
+//        int parents =0;
+//        for (URI iter: this.types.keySet()
+//             ) {
+//            children=children+this.types.get(iter).children.size();
+//            parents=parents+this.types.get(iter).parents.size();
+//
+//        }
+//        System.out.println(children);
+//        System.out.println(parents);
         return result;
     }
 
@@ -292,6 +306,11 @@ public class LinkingAnalyzer {
             }
         }
         Collections.sort(roots);
+
+//        for (Type type: roots
+//             ) {
+//            System.out.println(type.uri);
+//        }
 
         final StringBuilder builder = new StringBuilder();
         builder.append("<html>\n<head>\n");
@@ -334,7 +353,7 @@ public class LinkingAnalyzer {
         final List<Type> children = Lists.newArrayList();
         for (final URI uri : type.children) {
             final Type child = this.types.get(uri);
-            System.out.println(child.uri.toString());
+            //System.out.println(child.uri.toString());
             if (child != null && child.entities <= type.entities) {
                 children.add(child);
             }
@@ -344,7 +363,7 @@ public class LinkingAnalyzer {
         for (int i = 0; i < indent; ++i) {
             builder.append("&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;");
         }
-        builder.append(type.uri.getLocalName());
+        builder.append(type.uri.getLocalName()+"["+indent+"]");
         builder.append("</td>");
         builder.append("<td>").append(type.totalEntities).append("</td>");
        // builder.append("<td>").append(type.entities * 1000 / type.totalEntities / 10.0)
@@ -354,7 +373,8 @@ public class LinkingAnalyzer {
       //          .append("%</td>");
         builder.append("</tr>\n");
 
-        if ((!children.isEmpty())&&(indent<2)) {
+        if ((!children.isEmpty())&&(indent<3)) {
+        //if ((!children.isEmpty())) {
             for (final Type child : Ordering.natural().sortedCopy(children)) {
                 formatReportHelper(builder, child, indent + 1);
             }
@@ -380,6 +400,9 @@ public class LinkingAnalyzer {
                     .withOption("g", "granularity",
                             "the granularity (number of documents) such that an instance is considered", "NUM2",
                             CommandLine.Type.INTEGER, true, false, true)
+                    .withOption("h", "hierarchy depth",
+                            "max depth level of the hierarchy considered - default is 3", "NUM2",
+                            CommandLine.Type.INTEGER, true, false, true)
                     .withOption("o", "output", "the output file", "FILE", CommandLine.Type.FILE,
                             true, false, true)
                     .withOption("t", "timeout",
@@ -398,7 +421,8 @@ public class LinkingAnalyzer {
 //            final File taxonomyFile = cmd.getOptionValue("t", File.class);
             final File outputFile = cmd.getOptionValue("o", File.class);
             //final int numDocuments = cmd.getOptionValue("d", Integer.class);
-            final int granularity = cmd.getOptionValue("g", Integer.class);
+            final int granularity = cmd.getOptionValue("g", Integer.class, 1);
+            final int hierarchyDepth = cmd.getOptionValue("h", Integer.class,3);
             final String serverURL = cmd.getOptionValue("s", String.class);
             final String username = Strings.emptyToNull(cmd.getOptionValue("u", String.class));
             final String password = Strings.emptyToNull(cmd.getOptionValue("p", String.class));
@@ -420,7 +444,7 @@ public class LinkingAnalyzer {
                 }
                 //download(session, outputFile, dumpResources, dumpMentions);
                 //queryFolder.newDirectoryStream();
-                final LinkingAnalyzer analyzer = new LinkingAnalyzer(session, granularity, timeoutSec);
+                final LinkingAnalyzer analyzer = new LinkingAnalyzer(session, granularity, hierarchyDepth, timeoutSec);
                 final String report = analyzer.analyze();
                 Files.write(report, outputFile, Charsets.UTF_8);
 

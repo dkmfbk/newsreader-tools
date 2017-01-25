@@ -1,0 +1,21 @@
+<configuration>
+
+  <appender
+    name="STDOUT"
+    class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+      <!-- <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n</pattern> -->
+      <!-- <pattern>%d{HH:mm:ss.SSS}\(%.-1level\) [%X{context}] %msg \(%logger{0}\)%n%rEx{full}</pattern> -->
+      <pattern>%d{HH:mm:ss.SSS}\(%.-1level\) [%X{context}] %msg%n%rEx{full}</pattern>
+    </encoder>
+  </appender>
+
+  <root level="WARN">
+    <appender-ref ref="STDOUT" />
+  </root>
+
+  <logger
+    name="eu.fbk.nwrtools"
+    level="INFO" />
+
+</configuration>
